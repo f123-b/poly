@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     auto_order_notional: float = 100.0
     auto_max_trades_per_cycle: int = 3
     event_feed_url: str | None = None
+    evidence_max_adjustment: float = 0.035
+    evidence_confidence_weight: float = 0.08
+    history_limit: int = 240
+    smart_money_demo: bool = False
     live_execution_enabled: bool = False
     live_risk_ack: str = ""
     live_private_key: str = ""
