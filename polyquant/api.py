@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .backtest import Backtester
+from .auto_trader import AutoTrader
 from .calibration import calibration_metrics
 from .smart_money import SmartMoneyClient
 from .strategies import CrossMarketAnalyzer
@@ -12,7 +13,7 @@ from .models import BacktestRequest, PaperOrderRequest
 from .service import QuantService
 
 ROOT=Path(__file__).resolve().parent.parent
-settings=get_settings(); service=QuantService(settings); backtester=Backtester(); cross_market=CrossMarketAnalyzer(); smart_money=SmartMoneyClient()
+settings=get_settings(); service=QuantService(settings); backtester=Backtester(); cross_market=CrossMarketAnalyzer(); smart_money=SmartMoneyClient(); auto_trader=AutoTrader(service,settings.auto_interval_seconds,settings.auto_order_notional,settings.auto_max_trades_per_cycle)
 app=FastAPI(title="PolyQuant Intelligence",version="1.0.0")
 
 @app.get("/api/health")
@@ -44,6 +45,26 @@ async def smart_money_leaderboard(category:str="OVERALL",time_period:str="MONTH"
 @app.get("/api/calibration/demo")
 async def calibration_demo():
     return calibration_metrics([.18,.28,.36,.48,.57,.64,.72,.81],[0,0,1,0,1,1,1,1],bins=5)
+
+@app.get("/api/auto/status")
+async def auto_status(): return auto_trader.status()
+
+@app.post("/api/auto/run-once")
+async def auto_run_once(): return await auto_trader.run_once()
+
+@app.post("/api/auto/start")
+async def auto_start(): return await auto_trader.start()
+
+@app.post("/api/auto/stop")
+async def auto_stop(): return await auto_trader.stop()
+
+@app.on_event("startup")
+async def startup_auto():
+    if settings.auto_trade_enabled: await auto_trader.start()
+
+@app.on_event("shutdown")
+async def shutdown_auto():
+    await auto_trader.stop()
 
 @app.get("/api/paper/account")
 async def paper_account(): return service.broker.account()

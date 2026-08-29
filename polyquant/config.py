@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     max_single_market_pct: float = 0.03
     max_total_exposure_pct: float = 0.50
     fractional_kelly: float = 0.25
+    auto_trade_enabled: bool = False
+    auto_interval_seconds: int = 60
+    auto_order_notional: float = 100.0
+    auto_max_trades_per_cycle: int = 3
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None

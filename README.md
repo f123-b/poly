@@ -21,6 +21,7 @@ V1 的目标不是“让大模型直接下注”，而是建立完整决策链�
 - Fractional Kelly 建议仓位
 - 单市场 / 总敞口 / Edge / Confidence / Spread 硬风控
 - Paper Broker：现金、持仓、成交、PnL
+- Auto Paper Trader：自动扫描 → 风控 → 自动模拟成交，可启动/停止/单次运行
 - 回测：滑点、费用、ROI、Max Drawdown、Win Rate、Sharpe
 - SQLite 预测与交易审计记录
 - FastAPI API
@@ -66,6 +67,8 @@ POLYQUANT_MODE=demo
 
 默认 `auto`：优先读取真实 Polymarket 公共行情，失败自动切 Demo。
 
+自动交易循环默认关闭；可调用 `/api/auto/start` 启动 **Paper 自动交易**。如需启动时自动运行：`POLYQUANT_AUTO_TRADE_ENABLED=true`。
+
 ## 可选 AI Research
 
 支持任意 OpenAI-compatible Chat Completions 服务：
@@ -87,6 +90,9 @@ AI 只提供低权重概率研究输入，**不能调用交易执行器**。
 - `GET /api/cross-market/anomalies`
 - `GET /api/calibration/demo`
 - `GET /api/smart-money/leaderboard`
+- `GET /api/auto/status`
+- `POST /api/auto/run-once`
+- `POST /api/auto/start` / `POST /api/auto/stop`
 - `GET /api/paper/account`
 - `POST /api/paper/orders`
 - `POST /api/backtest`
