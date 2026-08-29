@@ -1,7 +1,7 @@
 [project]
 name = "polyquant-intelligence"
-version = "2.0.0"
-description = "Prediction-market quantitative research, forecasting, backtesting and paper trading terminal"
+version = "5.0.0"
+description = "Persistent prediction-market quantitative research, forecasting, validation, backtesting and paper-trading terminal"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
