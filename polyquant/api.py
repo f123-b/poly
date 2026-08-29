@@ -15,13 +15,13 @@ from .realtime import RealtimeEngine
 from .validation import StrategyValidator
 from .models import BacktestRequest,ExperimentRequest,LiveOrderRequest,PaperOrderRequest,ResolveMarketRequest,ValidationGateRequest
 from .service import QuantService
-ROOT=Path(__file__).resolve().parent.parent
-settings=get_settings();service=QuantService(settings);backtester=Backtester();cross_market=CrossMarketAnalyzer();experiments=ExperimentRegistry(service.storage,backtester);validator=StrategyValidator();auto_trader=AutoTrader(service,settings.auto_interval_seconds,settings.auto_order_notional,settings.auto_max_trades_per_cycle,settings.auto_allow_pyramiding);maintenance=MaintenanceLoop(service,settings.maintenance_interval_seconds,settings.maintenance_resolution_sync,settings.maintenance_resolution_limit);realtime=RealtimeEngine(service,settings.realtime_enabled,settings.realtime_prefer_sdk,settings.realtime_poll_seconds,settings.realtime_stale_seconds,settings.realtime_market_limit)
-app=FastAPI(title='PolyQuant Intelligence',version='7.0.0')
+ROOT=Path(__file__).resolve().parent.parent;VERSION='8.0.0'
+settings=get_settings();service=QuantService(settings);backtester=Backtester();cross_market=CrossMarketAnalyzer();experiments=ExperimentRegistry(service.storage,backtester);validator=StrategyValidator();auto_trader=AutoTrader(service,settings.auto_interval_seconds,settings.auto_order_notional,settings.auto_max_trades_per_cycle,settings.auto_allow_pyramiding);maintenance=MaintenanceLoop(service,settings.maintenance_interval_seconds,settings.maintenance_resolution_sync,settings.maintenance_resolution_limit);realtime=RealtimeEngine(service,settings.realtime_enabled,settings.realtime_prefer_sdk,settings.realtime_poll_seconds,settings.realtime_stale_seconds,settings.realtime_market_limit,settings.realtime_book_refresh_limit)
+app=FastAPI(title='PolyQuant Intelligence',version=VERSION)
 @app.get('/api/health')
-async def health():return {'ok':True,'mode':settings.mode,'data_source':service.last_source,'live_execution':settings.live_execution_enabled,'realtime':realtime.status(),'version':'7.0.0'}
+async def health():return {'ok':True,'mode':settings.mode,'data_source':service.last_source,'live_execution':settings.live_execution_enabled,'realtime':realtime.status(),'version':VERSION}
 @app.get('/api/system/status')
-async def system_status():return {**service.system_status(),'version':'7.0.0','maintenance':maintenance.status(),'realtime':realtime.status()}
+async def system_status():return {**service.system_status(),'maintenance':maintenance.status(),'realtime':realtime.status()}
 @app.get('/api/realtime/status')
 async def realtime_status():return realtime.status()
 @app.get('/api/realtime/snapshot')

@@ -2,11 +2,11 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime,timezone
 from typing import Any
-from .demo_data import DEMO_MARKETS
+from .demo_data import DEMO_MARKETS,demo_book
 from .models import BookLevel,Market,OrderBook
 
 class RealtimeMarketCache:
-    """In-memory read-only quote/book cache. It never calls an executor."""
+    """Read-only realtime quote/order-book cache with strict staleness rules."""
     def __init__(self,stale_seconds:float=20.0):
         self.stale_seconds=max(1.0,float(stale_seconds));self._token_meta={};self._quotes={};self._books={};self.events=0;self.last_event_at=None
     def register_markets(self,markets:list[Market]):
@@ -36,30 +36,50 @@ class RealtimeMarketCache:
     def apply_sdk_event(self,event:Any)->list[dict]:
         typ=getattr(event,'type',None);payload=getattr(event,'payload',None);updates=[]
         if payload is None:return updates
-        if typ=='book':
-            token=str(payload.token_id);updates.append(self.update_book(token,payload.bids,payload.asks,float(payload.last_trade_price) if payload.last_trade_price is not None else None,'polymarket-wss'))
+        if typ=='book':updates.append(self.update_book(str(payload.token_id),payload.bids,payload.asks,float(payload.last_trade_price) if payload.last_trade_price is not None else None,'polymarket-wss'))
         elif typ=='best_bid_ask':updates.append(self.update_quote(str(payload.token_id),float(payload.best_bid) if payload.best_bid is not None else None,float(payload.best_ask) if payload.best_ask is not None else None,source='polymarket-wss'))
         elif typ=='last_trade_price':updates.append(self.update_quote(str(payload.token_id),last_price=float(payload.price),source='polymarket-wss'))
         elif typ=='price_change':
             for x in payload.price_changes:updates.append(self.update_quote(str(x.token_id),float(x.best_bid) if x.best_bid is not None else None,float(x.best_ask) if x.best_ask is not None else None,float(x.price),'polymarket-wss'))
         return updates
+    def _fresh(self,updated_at:str|None)->bool:
+        if not updated_at:return False
+        try:return (datetime.now(timezone.utc)-datetime.fromisoformat(updated_at.replace('Z','+00:00'))).total_seconds()<=self.stale_seconds
+        except (ValueError,TypeError):return False
+    def quote(self,token_id:str,fresh_only:bool=True):
+        q=self._quotes.get(token_id)
+        return q if q and (not fresh_only or self._fresh(q.get('updated_at'))) else None
+    @staticmethod
+    def _probability(q:dict|None)->float|None:
+        if not q:return None
+        bid=q.get('best_bid');ask=q.get('best_ask');last=q.get('last_price')
+        if bid is not None and ask is not None and 0<=float(bid)<=float(ask)<=1:return (float(bid)+float(ask))/2
+        if last is not None and 0<=float(last)<=1:return float(last)
+        return None
+    def market_prices(self,m:Market)->dict|None:
+        y=self._probability(self.quote(m.yes_token_id)) if m.yes_token_id else None;n=self._probability(self.quote(m.no_token_id)) if m.no_token_id else None
+        if y is None and n is None:return None
+        if y is None:y=1-float(n)
+        if n is None:n=1-float(y)
+        total=float(y)+float(n)
+        if total<=0:return None
+        return {'yes_price':max(.001,min(.999,float(y)/total)),'no_price':max(.001,min(.999,float(n)/total)),'source':'realtime-cache'}
     def book(self,token_id:str)->OrderBook|None:
         row=self._books.get(token_id)
         if not row:return None
         book,ts=row
         if (datetime.now(timezone.utc)-ts).total_seconds()>self.stale_seconds:return None
         return book
-    def quote(self,token_id:str):return self._quotes.get(token_id)
-    def snapshot(self):return {'quotes':list(self._quotes.values()),'events':self.events,'last_event_at':self.last_event_at}
+    def snapshot(self):return {'quotes':list(self._quotes.values()),'events':self.events,'last_event_at':self.last_event_at,'books':len(self._books)}
 
 class RealtimeEngine:
-    """Public market-data engine: official SDK stream first, REST polling fallback."""
-    def __init__(self,service,enabled:bool=True,prefer_sdk:bool=True,poll_seconds:float=5.0,stale_seconds:float=20.0,market_limit:int=20):
-        self.service=service;self.enabled=bool(enabled);self.prefer_sdk=bool(prefer_sdk);self.poll_seconds=max(.5,float(poll_seconds));self.market_limit=max(1,min(int(market_limit),100));self.cache=RealtimeMarketCache(stale_seconds);self._task=None;self._subscribers=set();self.mode='stopped';self.reconnects=0;self.fallbacks=0;self.last_error=None;self.started_at=None;self.sdk_available=None
+    """Public market-data engine: official SDK WSS first; REST/Demo fallback."""
+    def __init__(self,service,enabled=True,prefer_sdk=True,poll_seconds=5.0,stale_seconds=20.0,market_limit=20,book_refresh_limit=5):
+        self.service=service;self.enabled=bool(enabled);self.prefer_sdk=bool(prefer_sdk);self.poll_seconds=max(.5,float(poll_seconds));self.market_limit=max(1,min(int(market_limit),100));self.book_refresh_limit=max(0,min(int(book_refresh_limit),20));self.cache=RealtimeMarketCache(stale_seconds);setattr(service,'realtime_cache',self.cache);self._task=None;self._subscribers=set();self.mode='stopped';self.reconnects=0;self.fallbacks=0;self.last_error=None;self.started_at=None;self.sdk_available=None
     @property
     def running(self):return self._task is not None and not self._task.done()
     def status(self):
-        snap=self.cache.snapshot();return {'enabled':self.enabled,'running':self.running,'mode':self.mode,'prefer_sdk':self.prefer_sdk,'sdk_available':self.sdk_available,'poll_seconds':self.poll_seconds,'market_limit':self.market_limit,'reconnects':self.reconnects,'fallbacks':self.fallbacks,'subscribers':len(self._subscribers),'last_error':self.last_error,'started_at':self.started_at,'events':snap['events'],'last_event_at':snap['last_event_at'],'cached_quotes':len(snap['quotes'])}
+        s=self.cache.snapshot();return {'enabled':self.enabled,'running':self.running,'mode':self.mode,'prefer_sdk':self.prefer_sdk,'sdk_available':self.sdk_available,'poll_seconds':self.poll_seconds,'market_limit':self.market_limit,'book_refresh_limit':self.book_refresh_limit,'reconnects':self.reconnects,'fallbacks':self.fallbacks,'subscribers':len(self._subscribers),'last_error':self.last_error,'started_at':self.started_at,'events':s['events'],'last_event_at':s['last_event_at'],'cached_quotes':len(s['quotes']),'cached_books':s['books']}
     def subscribe(self):q=asyncio.Queue(maxsize=8);self._subscribers.add(q);return q
     def unsubscribe(self,q):self._subscribers.discard(q)
     def _broadcast(self,payload):
@@ -91,10 +111,18 @@ class RealtimeEngine:
                 try:await handle.close()
                 except Exception:pass
             await client.close()
+    async def _refresh_book(self,m:Market):
+        if self.service.s.mode=='demo':
+            book=demo_book(m);self.cache.update_book(m.yes_token_id or m.id,book.bids,book.asks,m.yes_price,'demo-realtime');return
+        if m.yes_token_id:
+            try:
+                b=await self.service.client.get_order_book(m.yes_token_id);self.cache.update_book(m.yes_token_id,b.bids,b.asks,m.yes_price,'rest-poll')
+            except Exception:pass
     async def _poll_loop(self):
         self.mode='demo-realtime' if self.service.s.mode=='demo' else 'rest-poll'
         while True:
             markets=await self._discover()
+            await asyncio.gather(*(self._refresh_book(m) for m in markets[:self.book_refresh_limit]))
             for m in markets:
                 if m.yes_token_id:self._broadcast({'type':'quote','data':self.cache.update_quote(m.yes_token_id,last_price=m.yes_price,source=self.mode)})
                 if m.no_token_id:self._broadcast({'type':'quote','data':self.cache.update_quote(m.no_token_id,last_price=m.no_price,source=self.mode)})
@@ -107,8 +135,7 @@ class RealtimeEngine:
                 else:await self._poll_loop()
                 backoff=1.0
             except asyncio.CancelledError:raise
-            except ModuleNotFoundError as exc:
-                self.sdk_available=False;self.last_error=f'official realtime SDK unavailable: {exc}';self.fallbacks+=1;await self._poll_loop()
+            except ModuleNotFoundError as exc:self.sdk_available=False;self.last_error=f'official realtime SDK unavailable: {exc}';self.fallbacks+=1;await self._poll_loop()
             except Exception as exc:
                 self.last_error=str(exc)[:300];self.reconnects+=1;self.fallbacks+=1
                 try:await asyncio.wait_for(self._poll_loop(),timeout=max(15.0,self.poll_seconds*3))
