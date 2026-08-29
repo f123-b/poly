@@ -2,6 +2,7 @@ from __future__ import annotations
 import json,sqlite3,uuid
 from datetime import datetime,timezone
 from .models import FeatureSnapshot,Market,PaperTrade,Prediction
+
 class Storage:
     def __init__(self,path:str):self.path=path;self._init()
     def _conn(self):c=sqlite3.connect(self.path);c.row_factory=sqlite3.Row;return c
@@ -9,7 +10,15 @@ class Storage:
     def _now()->str:return datetime.now(timezone.utc).isoformat()
     def _init(self):
         with self._conn() as c:
-            c.execute('CREATE TABLE IF NOT EXISTS predictions (id INTEGER PRIMARY KEY, market_id TEXT, created_at TEXT, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_predictions_market_time ON predictions(market_id,created_at)');c.execute('CREATE TABLE IF NOT EXISTS market_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, yes_price REAL, no_price REAL, liquidity REAL, volume_24h REAL, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_market_snapshots_market_time ON market_snapshots(market_id,created_at)');c.execute('CREATE TABLE IF NOT EXISTS feature_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_feature_snapshots_market_time ON feature_snapshots(market_id,created_at)');c.execute('CREATE TABLE IF NOT EXISTS paper_trades (id TEXT PRIMARY KEY, market_id TEXT, created_at TEXT, payload TEXT)');c.execute('CREATE TABLE IF NOT EXISTS live_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, notional REAL, payload TEXT)');c.execute('CREATE TABLE IF NOT EXISTS evidence_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_evidence_market_time ON evidence_snapshots(market_id,created_at)');c.execute('CREATE TABLE IF NOT EXISTS resolutions (market_id TEXT PRIMARY KEY, outcome INTEGER NOT NULL, resolved_at TEXT NOT NULL)');c.execute('CREATE TABLE IF NOT EXISTS trader_profiles (wallet TEXT PRIMARY KEY, updated_at TEXT NOT NULL, payload TEXT NOT NULL)');c.execute('CREATE TABLE IF NOT EXISTS experiments (id TEXT PRIMARY KEY, name TEXT NOT NULL, strategy TEXT NOT NULL, created_at TEXT NOT NULL, config TEXT NOT NULL, metrics TEXT NOT NULL, notes TEXT NOT NULL)')
+            c.execute('CREATE TABLE IF NOT EXISTS predictions (id INTEGER PRIMARY KEY, market_id TEXT, created_at TEXT, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_predictions_market_time ON predictions(market_id,created_at)')
+            c.execute('CREATE TABLE IF NOT EXISTS market_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, yes_price REAL, no_price REAL, liquidity REAL, volume_24h REAL, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_market_snapshots_market_time ON market_snapshots(market_id,created_at)')
+            c.execute('CREATE TABLE IF NOT EXISTS feature_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_feature_snapshots_market_time ON feature_snapshots(market_id,created_at)')
+            c.execute('CREATE TABLE IF NOT EXISTS paper_trades (id TEXT PRIMARY KEY, market_id TEXT, created_at TEXT, payload TEXT)')
+            c.execute('CREATE TABLE IF NOT EXISTS live_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, notional REAL, payload TEXT)')
+            c.execute('CREATE TABLE IF NOT EXISTS evidence_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, market_id TEXT, created_at TEXT, payload TEXT)');c.execute('CREATE INDEX IF NOT EXISTS idx_evidence_market_time ON evidence_snapshots(market_id,created_at)')
+            c.execute('CREATE TABLE IF NOT EXISTS resolutions (market_id TEXT PRIMARY KEY, outcome INTEGER NOT NULL, resolved_at TEXT NOT NULL)')
+            c.execute('CREATE TABLE IF NOT EXISTS trader_profiles (wallet TEXT PRIMARY KEY, updated_at TEXT NOT NULL, payload TEXT NOT NULL)')
+            c.execute('CREATE TABLE IF NOT EXISTS experiments (id TEXT PRIMARY KEY, name TEXT NOT NULL, strategy TEXT NOT NULL, created_at TEXT NOT NULL, config TEXT NOT NULL, metrics TEXT NOT NULL, notes TEXT NOT NULL)')
     def save_market_snapshot(self,m:Market):
         with self._conn() as c:c.execute('INSERT INTO market_snapshots(market_id,created_at,yes_price,no_price,liquidity,volume_24h,payload) VALUES(?,?,?,?,?,?,?)',(m.id,self._now(),m.yes_price,m.no_price,m.liquidity,m.volume_24h,m.model_dump_json()))
     def save_feature_snapshot(self,f:FeatureSnapshot):
@@ -18,6 +27,18 @@ class Storage:
         with self._conn() as c:c.execute('INSERT INTO predictions(market_id,created_at,payload) VALUES(?,?,?)',(p.market_id,p.created_at.isoformat(),p.model_dump_json()))
     def save_trade(self,t:PaperTrade):
         with self._conn() as c:c.execute('INSERT OR REPLACE INTO paper_trades VALUES(?,?,?,?)',(t.id,t.market_id,t.created_at.isoformat(),t.model_dump_json()))
+    def paper_trades(self)->list[PaperTrade]:
+        with self._conn() as c:rows=c.execute('SELECT payload FROM paper_trades ORDER BY created_at,id').fetchall()
+        out=[]
+        for r in rows:
+            try:out.append(PaperTrade.model_validate_json(r['payload']))
+            except Exception:continue
+        return out
+    def latest_marks(self)->dict[tuple[str,str],float]:
+        sql='SELECT m.market_id,m.yes_price,m.no_price FROM market_snapshots m JOIN (SELECT market_id,MAX(id) mid FROM market_snapshots GROUP BY market_id) x ON x.mid=m.id';marks={}
+        with self._conn() as c:
+            for r in c.execute(sql):marks[(r['market_id'],'YES')]=float(r['yes_price']);marks[(r['market_id'],'NO')]=float(r['no_price'])
+        return marks
     def save_evidence(self,market_id:str,payload:str):
         with self._conn() as c:c.execute('INSERT INTO evidence_snapshots(market_id,created_at,payload) VALUES(?,?,?)',(market_id,self._now(),payload))
     def save_resolution(self,market_id:str,outcome:int):
@@ -55,12 +76,24 @@ class Storage:
             return list(reversed(out))
         return {'market_id':market_id,'market':self.market_history(market_id,n),'predictions':decode(preds),'features':decode(feats),'evidence':list(reversed(self.evidence_for(market_id,n)))}
     def calibration_pairs(self)->tuple[list[float],list[int]]:
-        sql='SELECT p.payload,r.outcome FROM predictions p JOIN resolutions r ON r.market_id=p.market_id JOIN (SELECT market_id,MAX(id) latest_id FROM predictions GROUP BY market_id) latest ON latest.latest_id=p.id ORDER BY p.id';probs=[];outcomes=[]
+        rows=self.scorecard_rows();return [float(r['model_probability']) for r in rows],[int(r['outcome']) for r in rows]
+    def scorecard_rows(self)->list[dict]:
+        sql='''SELECT p.payload prediction,r.outcome,m.payload market FROM predictions p JOIN resolutions r ON r.market_id=p.market_id JOIN (SELECT market_id,MAX(id) pid FROM predictions GROUP BY market_id) lp ON lp.pid=p.id LEFT JOIN market_snapshots m ON m.id=(SELECT MAX(m2.id) FROM market_snapshots m2 WHERE m2.market_id=p.market_id) ORDER BY p.id''';out=[]
         with self._conn() as c:
             for row in c.execute(sql):
-                try:payload=json.loads(row['payload']);probs.append(float(payload['model_probability']));outcomes.append(int(row['outcome']))
+                try:
+                    p=json.loads(row['prediction']);m=json.loads(row['market']) if row['market'] else {};out.append({'market_id':p.get('market_id'),'question':m.get('question',''),'category':m.get('category','General'),'model_version':p.get('model_version','unknown'),'market_probability':float(p['market_probability']),'model_probability':float(p['model_probability']),'confidence':float(p.get('confidence',0)),'edge':float(p.get('edge',0)),'direction':p.get('direction','PASS'),'outcome':int(row['outcome']),'created_at':p.get('created_at')})
                 except (KeyError,TypeError,ValueError,json.JSONDecodeError):continue
-        return probs,outcomes
+        return out
+    def prediction_dataset(self,limit:int=10000)->list[dict]:
+        n=max(1,min(limit,100000));sql='''SELECT p.payload prediction,r.outcome,m.payload market FROM predictions p LEFT JOIN resolutions r ON r.market_id=p.market_id LEFT JOIN market_snapshots m ON m.id=(SELECT MAX(m2.id) FROM market_snapshots m2 WHERE m2.market_id=p.market_id) ORDER BY p.id DESC LIMIT ?''';out=[]
+        with self._conn() as c:
+            rows=c.execute(sql,(n,)).fetchall()
+        for row in reversed(rows):
+            try:
+                p=json.loads(row['prediction']);m=json.loads(row['market']) if row['market'] else {};out.append({'created_at':p.get('created_at'),'market_id':p.get('market_id'),'question':m.get('question',''),'category':m.get('category','General'),'model_version':p.get('model_version','unknown'),'market_probability':p.get('market_probability'),'raw_probability':p.get('raw_probability'),'model_probability':p.get('model_probability'),'confidence':p.get('confidence'),'edge':p.get('edge'),'direction':p.get('direction'),'outcome':row['outcome']})
+            except json.JSONDecodeError:continue
+        return out
     def evidence_for(self,market_id:str,limit:int=20)->list[dict]:
         with self._conn() as c:rows=c.execute('SELECT created_at,payload FROM evidence_snapshots WHERE market_id=? ORDER BY id DESC LIMIT ?',(market_id,max(1,min(limit,500)))).fetchall()
         out=[]

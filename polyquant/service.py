@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio,json
 from datetime import datetime,timezone
+from .analytics import ModelAnalytics
 from .calibration import calibration_metrics
 from .config import Settings
 from .demo_data import DEMO_MARKETS,demo_book
@@ -15,9 +16,10 @@ from .risk import RiskEngine
 from .smart_money import SmartMoneyClient
 from .storage import Storage
 from .live_execution import PolymarketLiveExecutor,REQUEST_CONFIRMATION
+
 class QuantService:
     def __init__(self,settings:Settings):
-        self.s=settings;self.client=PolymarketDataClient();self.features=FeatureEngine();self.prob=ProbabilityEngine(settings);self.risk=RiskEngine(settings);self.broker=PaperBroker(settings.starting_cash);self.storage=Storage(settings.db_path);self.live=PolymarketLiveExecutor(settings);self.events=EventIntelligence(settings.event_feed_url);self.graph=MarketGraph();self.smart=SmartMoneyClient(demo=settings.mode=='demo' or settings.smart_money_demo);self._markets={};self.last_source='demo'
+        self.s=settings;self.client=PolymarketDataClient();self.features=FeatureEngine();self.prob=ProbabilityEngine(settings);self.risk=RiskEngine(settings);self.storage=Storage(settings.db_path);self.broker=PaperBroker(settings.starting_cash,settings.paper_fee_bps,settings.paper_slippage_bps);self.broker.restore(self.storage.paper_trades(),self.storage.latest_marks());self.live=PolymarketLiveExecutor(settings);self.events=EventIntelligence(settings.event_feed_url);self.graph=MarketGraph();self.smart=SmartMoneyClient(demo=settings.mode=='demo' or settings.smart_money_demo);self.analytics=ModelAnalytics();self._markets={};self.last_source='demo'
     async def markets(self)->list[Market]:
         data=[]
         if self.s.mode!='demo':
@@ -26,8 +28,8 @@ class QuantService:
         if not data:data=DEMO_MARKETS[:self.s.scan_limit];self.last_source='demo'
         else:self.last_source='polymarket'
         self._markets={m.id:m for m in data}
-        for m in data:self.storage.save_market_snapshot(m)
-        self.storage.prune_research(self.s.snapshot_retention_per_market);return data
+        for m in data:self.storage.save_market_snapshot(m);self.broker.mark(m.id,'YES',m.yes_price);self.broker.mark(m.id,'NO',m.no_price)
+        return data
     async def _book(self,m:Market)->OrderBook:
         if m.source=='polymarket' and m.yes_token_id:
             try:return await self.client.get_order_book(m.yes_token_id)
@@ -68,10 +70,12 @@ class QuantService:
             try:remote=[{'timestamp':t,'yes_price':p} for t,p in await self.client.price_history(market.yes_token_id,'1d',60)]
             except Exception:remote=[]
         return {'market_id':market_id,'source':'polymarket-history' if remote else 'local-snapshots','points':remote or local}
-    def research_history(self,market_id:str,limit:int=100)->dict:return self.storage.research_history(market_id,limit)
-    async def trader_profile(self,wallet:str)->dict:
+    def research_history(self,market_id:str,limit:int=100):return self.storage.research_history(market_id,limit)
+    def scorecards(self):return self.analytics.scorecards(self.storage.scorecard_rows())
+    def prediction_dataset(self,limit:int=10000):return self.storage.prediction_dataset(limit)
+    async def trader_profile(self,wallet:str):
         profile=await self.smart.profile(wallet);self.storage.save_trader_profile(profile['wallet'],profile);return profile
-    async def smart_money_flow(self,market_id:str)->dict:
+    async def smart_money_flow(self,market_id:str):
         if market_id not in self._markets:await self.markets()
         market=self._markets.get(market_id)
         if not market:raise KeyError(market_id)
@@ -79,7 +83,7 @@ class QuantService:
         if not market.condition_id:return {'market_id':market_id,'score':0.0,'reason':'condition_id unavailable'}
         result=await self.smart.market_flow(market.condition_id);return {'market_id':market_id,**result}
     def resolve(self,market_id:str,outcome:str):self.storage.save_resolution(market_id,1 if outcome=='YES' else 0);return {'market_id':market_id,'outcome':outcome,'saved':True}
-    async def sync_resolutions(self,limit:int=100)->dict:
+    async def sync_resolutions(self,limit:int=100):
         if self.s.mode=='demo':return {'source':'demo','scanned':0,'saved':0,'note':'Resolution sync is disabled in offline demo mode.'}
         rows=await self.client.list_resolved_markets(limit);saved=0
         for m,outcome in rows:self.storage.save_resolution(m.id,1 if outcome=='YES' else 0);saved+=1
@@ -88,8 +92,8 @@ class QuantService:
         probs,outcomes=self.storage.calibration_pairs()
         if not probs:return {'samples':0,'brier_score':None,'log_loss':None,'ece':None,'bins':[]}
         return calibration_metrics(probs,outcomes,bins=10).model_dump()
-    def system_status(self)->dict:
-        acc=self.broker.account();return {'version':'4.0.0','data_source':self.last_source,'warehouse':self.storage.stats(),'paper':{'equity':acc.equity,'cash':acc.cash,'exposure':acc.exposure,'positions':len(acc.positions),'trades':len(acc.trades)},'risk':{'min_edge':self.s.min_edge,'min_confidence':self.s.min_confidence,'max_spread':self.s.max_spread,'min_liquidity':self.s.min_liquidity,'max_single_market_pct':self.s.max_single_market_pct,'max_total_exposure_pct':self.s.max_total_exposure_pct,'fractional_kelly':self.s.fractional_kelly},'live_execution_enabled':self.s.live_execution_enabled,'auto_execution':'paper-only'}
+    def system_status(self):
+        acc=self.broker.account();return {'version':'5.0.0','data_source':self.last_source,'warehouse':self.storage.stats(),'paper':{'persistent':True,'equity':acc.equity,'cash':acc.cash,'exposure':acc.exposure,'positions':len(acc.positions),'trades_total':len(self.storage.paper_trades()),'trades_visible':len(acc.trades)},'risk':{'min_edge':self.s.min_edge,'min_confidence':self.s.min_confidence,'max_spread':self.s.max_spread,'min_liquidity':self.s.min_liquidity,'max_single_market_pct':self.s.max_single_market_pct,'max_total_exposure_pct':self.s.max_total_exposure_pct,'fractional_kelly':self.s.fractional_kelly},'live_execution_enabled':self.s.live_execution_enabled,'auto_execution':'paper-only','auto_pyramiding':self.s.auto_allow_pyramiding}
     async def paper_order(self,req:PaperOrderRequest):
         op=await self.get_market(req.market_id);acc=self.broker.account();ref=op.market.yes_price if req.outcome=='YES' else op.market.no_price
         if req.side=='SELL':
