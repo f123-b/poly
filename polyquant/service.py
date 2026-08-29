@@ -55,39 +55,29 @@ class QuantService:
         evidence=await self.events.for_market(market)
         self.storage.save_evidence(market_id,evidence.model_dump_json())
         return evidence
-    async def event_feed(self):
-        return await self.events.fetch()
-    async def graph_anomalies(self):
-        return self.graph.anomalies(await self.markets())
+    async def event_feed(self): return await self.events.fetch()
+    async def graph_anomalies(self): return self.graph.anomalies(await self.markets())
     def resolve(self,market_id:str,outcome:str):
         self.storage.save_resolution(market_id,1 if outcome=="YES" else 0)
         return {"market_id":market_id,"outcome":outcome,"saved":True}
     def historical_calibration(self):
         probs,outcomes=self.storage.calibration_pairs()
-        if not probs:
-            return {"sample_size":0,"brier":None,"log_loss":None,"ece":None,"bins":[]}
-        result=calibration_metrics(probs,outcomes,bins=10)
-        result["sample_size"]=len(probs)
-        return result
+        if not probs: return {"samples":0,"brier_score":None,"log_loss":None,"ece":None,"bins":[]}
+        return calibration_metrics(probs,outcomes,bins=10).model_dump()
     async def paper_order(self,req:PaperOrderRequest):
-        op=await self.get_market(req.market_id); acc=self.broker.account()
-        ref=op.market.yes_price if req.outcome=="YES" else op.market.no_price
+        op=await self.get_market(req.market_id); acc=self.broker.account(); ref=op.market.yes_price if req.outcome=="YES" else op.market.no_price
         if req.side == "SELL":
-            pos=next((p for p in acc.positions if p.market_id==req.market_id and p.outcome==req.outcome),None)
-            max_exit=(pos.shares*ref) if pos else 0.0
-            if req.notional > max_exit + 1e-9:
-                return RiskDecision(approved=False,reasons=[f"卖出金额超过现有持仓市值 ${max_exit:.2f}"],max_notional=max_exit,suggested_notional=max_exit),None
+            pos=next((p for p in acc.positions if p.market_id==req.market_id and p.outcome==req.outcome),None); max_exit=(pos.shares*ref) if pos else 0.0
+            if req.notional > max_exit + 1e-9: return RiskDecision(approved=False,reasons=[f"卖出金额超过现有持仓市值 ${max_exit:.2f}"],max_notional=max_exit,suggested_notional=max_exit),None
             decision=RiskDecision(approved=True,reasons=["风险降低型退出"],max_notional=max_exit,suggested_notional=req.notional)
         else:
             pred=op.prediction
             if pred.direction != req.outcome: pred=pred.model_copy(update={"direction":"PASS"})
             decision=self.risk.evaluate(pred,op.features,acc.equity,acc.exposure,req.notional,self.broker.market_exposure(req.market_id))
             if not decision.approved: return decision,None
-        trade=self.broker.execute(req.market_id,req.outcome,req.side,req.notional,ref); self.storage.save_trade(trade)
-        return decision,trade
+        trade=self.broker.execute(req.market_id,req.outcome,req.side,req.notional,ref); self.storage.save_trade(trade); return decision,trade
     async def live_order(self, req:LiveOrderRequest):
-        if req.confirmation != REQUEST_CONFIRMATION:
-            return RiskDecision(approved=False,reasons=[f"confirmation must equal {REQUEST_CONFIRMATION}"]),None
+        if req.confirmation != REQUEST_CONFIRMATION: return RiskDecision(approved=False,reasons=[f"confirmation must equal {REQUEST_CONFIRMATION}"]),None
         op=await self.get_market(req.market_id); p=op.prediction; f=op.features; reasons=[]
         if op.market.source != "polymarket": reasons.append("Live execution only accepts real Polymarket markets")
         if p.direction != req.outcome or p.direction == "PASS": reasons.append("当前模型方向与请求不一致或无可交易 Edge")
@@ -103,5 +93,4 @@ class QuantService:
         if not token: reasons.append("市场缺少可交易 token id")
         preflight=await self.live.preflight(); reasons.extend(preflight["reasons"])
         if reasons: return RiskDecision(approved=False,reasons=list(dict.fromkeys(reasons)),max_notional=min(self.s.live_max_order_notional,max(0,self.s.live_max_daily_notional-daily))),None
-        result=await self.live.place_market_buy(token,req.notional); self.storage.save_live_trade(req.market_id,req.notional,result["submitted_at"],json.dumps(result,ensure_ascii=False))
-        return RiskDecision(approved=True,reasons=["通过实盘硬门禁"],max_notional=self.s.live_max_order_notional,suggested_notional=req.notional),result
+        result=await self.live.place_market_buy(token,req.notional); self.storage.save_live_trade(req.market_id,req.notional,result["submitted_at"],json.dumps(result,ensure_ascii=False)); return RiskDecision(approved=True,reasons=["通过实盘硬门禁"],max_notional=self.s.live_max_order_notional,suggested_notional=req.notional),result
