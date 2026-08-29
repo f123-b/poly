@@ -10,11 +10,13 @@
 <div class="shell">
   <aside class="sidebar">
     <div class="brand"><span class="logo">PQ</span><div><b>PolyQuant</b><small>Intelligence</small></div></div>
-    <nav><button class="active">总览</button><button>市场</button><button>机会</button><button>AI 概率</button><button>回测</button><button>Paper</button><button>风控</button></nav>
+    <nav>
+      <button class="active">总览</button><button>市场</button><button>机会</button><button>AI 概率</button><button>回测</button><button>Paper</button><button>风控</button>
+    </nav>
     <div class="sidefoot"><span id="sourceDot"></span><div><small>数据模式</small><b id="sourceText">连接中</b></div></div>
   </aside>
   <main>
-    <header><div><p class="eyebrow">PREDICTION MARKET QUANT OS</p><h1>交易机会总览</h1></div><div class="actions"><button id="refresh">刷新扫描</button><button id="backtestBtn" class="primary">运行示例回测</button></div></header>
+    <header><div><p class="eyebrow">PREDICTION MARKET QUANT OS</p><h1>交易机会总览</h1></div><div class="actions"><button id="refresh">刷新扫描</button><button id="autoBtn">启动自动 Paper</button><button id="backtestBtn" class="primary">运行示例回测</button></div></header>
     <section class="cards">
       <article><span>Paper Equity</span><strong id="equity">$10,000</strong><small id="pnl">PnL $0.00</small></article>
       <article><span>当前敞口</span><strong id="exposure">$0</strong><small>硬风控限制 50%</small></article>
@@ -22,10 +24,19 @@
       <article><span>强信号</span><strong id="signalCount">—</strong><small>Edge ≥ 5%</small></article>
     </section>
     <section class="grid">
-      <article class="panel wide"><div class="panelhead"><div><p class="eyebrow">OPPORTUNITY SCANNER</p><h2>Top Opportunities</h2></div><span class="pill">自动风控</span></div><div class="tablewrap"><table><thead><tr><th>市场</th><th>市场概率</th><th>模型概率</th><th>Edge</th><th>Confidence</th><th>Score</th><th></th></tr></thead><tbody id="opRows"><tr><td colspan="7" class="loading">正在扫描…</td></tr></tbody></table></div></article>
-      <article class="panel detail" id="detailPanel"><div class="panelhead"><div><p class="eyebrow">MARKET INTELLIGENCE</p><h2>选择一个市场</h2></div></div><div id="detail" class="empty">点击左侧市场查看概率、盘口与风险信息。</div></article>
+      <article class="panel wide">
+        <div class="panelhead"><div><p class="eyebrow">OPPORTUNITY SCANNER</p><h2>Top Opportunities</h2></div><span class="pill">自动风控</span></div>
+        <div class="tablewrap"><table><thead><tr><th>市场</th><th>市场概率</th><th>模型概率</th><th>Edge</th><th>Confidence</th><th>Score</th><th></th></tr></thead><tbody id="opRows"><tr><td colspan="7" class="loading">正在扫描…</td></tr></tbody></table></div>
+      </article>
+      <article class="panel detail" id="detailPanel">
+        <div class="panelhead"><div><p class="eyebrow">MARKET INTELLIGENCE</p><h2>选择一个市场</h2></div></div>
+        <div id="detail" class="empty">点击左侧市场查看概率、盘口与风险信息。</div>
+      </article>
     </section>
-    <section class="grid lower"><article class="panel"><div class="panelhead"><div><p class="eyebrow">PAPER ACCOUNT</p><h2>模拟组合</h2></div></div><div id="positions" class="empty">暂无持仓</div></article><article class="panel"><div class="panelhead"><div><p class="eyebrow">BACKTEST</p><h2>最近一次结果</h2></div></div><div id="backtest" class="empty">点击右上角“运行示例回测”。</div></article></section>
+    <section class="grid lower">
+      <article class="panel"><div class="panelhead"><div><p class="eyebrow">PAPER ACCOUNT</p><h2>模拟组合</h2></div></div><div id="positions" class="empty">暂无持仓</div></article>
+      <article class="panel"><div class="panelhead"><div><p class="eyebrow">BACKTEST</p><h2>最近一次结果</h2></div></div><div id="backtest" class="empty">点击右上角“运行示例回测”。</div></article>
+    </section>
   </main>
 </div>
 <script src="/assets/app.js"></script>
