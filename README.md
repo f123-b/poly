@@ -1,39 +1,31 @@
-# PolyQuant Intelligence V1
+# PolyQuant Intelligence V2
 
-一个可直接运行的 **Polymarket 量化分析 + 概率预测 + 回测 + Paper Trading + 风控终端**。
+Polymarket / prediction-market **量化分析 + 概率预测 + 事件研究 + 回测 + Paper Trading + 风控 + 受控实盘适配**终端。
 
-V1 的目标不是“让大模型直接下注”，而是建立完整决策链：
+核心决策链：
 
-`行情 -> 量化特征 -> 概率估计 -> Edge -> 硬风控 -> Paper 执行 -> 审计记录`
+`市场数据 → Feature → Evidence → Probability → Edge → Strategy → Hard Risk → Paper/Live Gate → Audit → Calibration`
 
-## 已完成
+## V2 已完成
 
-- Polymarket Gamma 市场发现（公开数据）
-- CLOB Order Book 公共行情读取
-- API 异常时自动 Demo Fallback
-- OrderBook / Spread / Depth / Imbalance / 流动性 / 成交量特征
-- Opportunity Scanner 排行
-- 保守概率融合引擎 + 可选 OpenAI-compatible Research 输入
-- Probability Edge 信号
-- Cross-Market 阈值逻辑异常检测
-- Calibration：Brier / Log Loss / ECE
-- Smart Money：Polymarket Trader Leaderboard 接口
-- Fractional Kelly 建议仓位
-- 单市场 / 总敞口 / Edge / Confidence / Spread 硬风控
-- Paper Broker：现金、持仓、成交、PnL
-- Auto Paper Trader：自动扫描 → 风控 → 自动模拟成交，可启动/停止/单次运行
-- 可选 Live Executor：官方 Python SDK + geoblock fail-closed + 明确确认短语 + 单笔/单市场/日累计硬上限
-- 回测：滑点、费用、ROI、Max Drawdown、Win Rate、Sharpe
-- SQLite 预测与交易审计记录
-- FastAPI API
-- 中文 Quant Dashboard
-- Docker / Demo / 单元测试
+- Polymarket 公共市场发现、订单簿与 Demo fallback
+- Spread / Depth / OrderBook Imbalance / Liquidity / Opportunity Scanner
+- 概率融合引擎与可选 OpenAI-compatible Research 输入
+- **Event Intelligence**：事件/新闻 JSON Feed、市场证据匹配、可靠度/新鲜度/情绪聚合、证据审计
+- **Market Graph**：阈值包含关系与逻辑概率异常检测
+- **Resolved Calibration**：保存市场最终 YES/NO，使用每个市场最新预测计算 Brier / Log Loss / ECE
+- Probability Edge、Cross-Market、Smart Money 基础能力
+- Fractional Kelly、单市场/总敞口/Edge/Confidence/Spread/Liquidity 硬风控
+- Paper Broker + Auto Paper Trader
+- 回测：费用、滑点、ROI、Max Drawdown、Win Rate、Sharpe
+- 可选真实执行：官方 Python SDK、geoblock fail-closed、双重确认、严格名义金额限制
+- SQLite 预测/证据/交易/Resolution 审计
+- FastAPI + 中文 Quant Dashboard V2
+- Docker、Demo 模式、GitHub Actions CI、单元测试
 
-> **Live 真钱执行默认关闭。** V1 是研究和模拟交易版本，不提供绕过地域限制、平台限制或硬风控的能力。
+> 自动循环始终只调用 Paper Broker。Live 真钱执行默认关闭，不能通过 AI 或策略绕过硬风控、确认短语或 geoblock preflight。
 
-## 最快启动
-
-### Docker
+## 启动
 
 ```bash
 git clone https://github.com/f123-b/poly.git
@@ -42,123 +34,58 @@ cp .env.example .env
 docker compose up --build
 ```
 
-打开：`http://localhost:8000`
+打开 `http://localhost:8000`。
 
-### 本地 Python
-
-需要 Python 3.11+：
+本地运行：
 
 ```bash
 python -m venv .venv
-# Windows: .venv\\Scripts\\activate
+# Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -e '.[dev]'
-python -m polyquant
+POLYQUANT_MODE=demo python -m polyquant
 ```
 
-## 离线 / Demo 模式
+## 数据模式
 
-`.env`：
+- `POLYQUANT_MODE=demo`：完全离线，无钱包/Key 即可跑 UI、扫描、回测和 Paper。
+- `POLYQUANT_MODE=auto`：优先 Polymarket 公共行情，失败自动 fallback。
+- `POLYQUANT_EVENT_FEED_URL=`：可选外部 JSON 事件源；为空时使用确定性的 Demo 证据流。
 
-```env
-POLYQUANT_MODE=demo
-```
+事件源支持 `[{...}]` 或 `{ "items": [...] }`，字段可包含 `title/summary/source/url/published_at/entities/reliability/sentiment`。
 
-无需钱包、API Key 或 Polymarket 网络连接即可完整运行 Dashboard、机会扫描、回测和 Paper Trading。
-
-默认 `auto`：优先读取真实 Polymarket 公共行情，失败自动切 Demo。
-
-自动交易循环默认关闭；可调用 `/api/auto/start` 启动 **Paper 自动交易**。如需启动时自动运行：`POLYQUANT_AUTO_TRADE_ENABLED=true`。
-
-## 可选 AI Research
-
-支持任意 OpenAI-compatible Chat Completions 服务：
-
-```env
-POLYQUANT_LLM_BASE_URL=https://your-provider.example/v1
-POLYQUANT_LLM_API_KEY=...
-POLYQUANT_LLM_MODEL=...
-```
-
-AI 只提供低权重概率研究输入，**不能调用交易执行器**。
-
-## 核心 API
+## 关键 API
 
 - `GET /api/health`
 - `GET /api/markets`
 - `GET /api/opportunities?limit=12`
-- `GET /api/markets/{market_id}`
+- `GET /api/markets/{id}`
+- `GET /api/markets/{id}/evidence`
+- `GET /api/events`
 - `GET /api/cross-market/anomalies`
-- `GET /api/calibration/demo`
-- `GET /api/smart-money/leaderboard`
-- `GET /api/live/preflight`
-- `POST /api/live/orders`（默认禁用，需要显式配置）
-- `GET /api/auto/status`
-- `POST /api/auto/run-once`
-- `POST /api/auto/start` / `POST /api/auto/stop`
+- `GET /api/cross-market/graph-anomalies`
+- `GET /api/calibration/history`
+- `POST /api/calibration/resolve` body: `{ "market_id": "...", "outcome": "YES" }`
 - `GET /api/paper/account`
 - `POST /api/paper/orders`
+- `GET|POST /api/auto/*`
 - `POST /api/backtest`
 - `POST /api/backtest/demo`
+- `GET /api/live/preflight`
+- `POST /api/live/orders`（默认禁用）
 
-### Paper 下单示例
+## 安全边界
 
-```json
-{
-  "market_id": "demo-btc",
-  "outcome": "YES",
-  "side": "BUY",
-  "notional": 100
-}
-```
+V2 不声称策略已经证明长期盈利。真实资金执行必须独立安装 `.[live]`、显式开启配置、通过所在地/geoblock 检查，并在每笔请求提供固定确认字符串。不要使用代理或其他方式绕过平台地域限制。
 
-请求仍会经过 RiskEngine；Edge、Confidence、Spread 或仓位不符合要求时返回 422 并给出拒绝原因。
-
-## 目录
-
-```text
-poly/
-├── polyquant/
-│   ├── api.py
-│   ├── polymarket.py
-│   ├── features.py
-│   ├── probability.py
-│   ├── risk.py
-│   ├── portfolio.py
-│   ├── backtest.py
-│   ├── storage.py
-│   └── service.py
-├── web/
-├── tests/
-├── scripts/
-├── Dockerfile
-├── docker-compose.yml
-└── ARCHITECTURE.md
-```
-
-## 当前边界与下一版本
-
-V1 已经形成完整、可运行的研究/Paper 闭环，但没有声称已经拥有经过长期样本验证的盈利 Alpha。后续重点应该是：历史盘口数据仓库、Resolved Market Calibration、事件/新闻 Agent、Cross-Market 关系图、Smart Money、PostgreSQL/Timescale、真实安全执行适配器。
-
-## 可选真实执行（实验性，默认关闭）
-
-V1 的自动循环仍固定为 **Paper**。真实资金执行器作为独立适配层提供，避免未经验证的自动实盘。启用前必须确认所在地可交易，并使用独立的小额钱包。
-
-安装官方 SDK 依赖：
+## 开发验证
 
 ```bash
-pip install -e '.[live]'
+pip install -e '.[dev]'
+pytest -q
+POLYQUANT_MODE=demo python scripts/smoke.py
 ```
 
-然后配置：
+CI 会执行 compileall、pytest 和 Demo smoke test。
 
-```env
-POLYQUANT_LIVE_EXECUTION_ENABLED=true
-POLYQUANT_LIVE_RISK_ACK=I_UNDERSTAND_REAL_MONEY_TRADING
-POLYQUANT_LIVE_PRIVATE_KEY=...
-POLYQUANT_LIVE_DEPOSIT_WALLET=...
-```
-
-先调用 `GET /api/live/preflight`，只有 `ready=true` 才允许继续。每个真实订单还要求请求字段 `confirmation` 精确等于 `EXECUTE_LIVE_ORDER`。V1 默认硬限制：单笔 $10、单市场每日 $20、全局每日 $25，可通过环境变量进一步调低。
-
-真实执行层使用 Polymarket 官方 `AsyncSecureClient.place_market_order`。没有真实凭据的 CI/本地测试不会提交订单。
+详见 `ARCHITECTURE.md` 与 `docs/IMPLEMENTATION_PLAN_V2.md`。

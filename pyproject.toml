@@ -1,6 +1,6 @@
 [project]
 name = "polyquant-intelligence"
-version = "1.0.0"
+version = "2.0.0"
 description = "Prediction-market quantitative research, forecasting, backtesting and paper trading terminal"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,12 +12,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9"]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.24,<1"]
 live = ["polymarket-client"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["setuptools>=70"]
