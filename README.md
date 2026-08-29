@@ -36,7 +36,6 @@ V1 的目标不是“让大模型直接下注”，而是建立完整决策链�
 ```bash
 git clone https://github.com/f123-b/poly.git
 cd poly
-git checkout codex/v1-full
 cp .env.example .env
 docker compose up --build
 ```
@@ -130,4 +129,4 @@ poly/
 
 ## 当前边界与下一版本
 
-V1 已经形成完整、可运行的研究/Paper 闭环，但没有声称已经拥有经过长期样本验证的盈利 Alpha。后续重点应该是：历史盘口数据仓库、Resolved Market Calibration、事件/新闻 Agent、Cross-Market 关系图、Smart Money 持仓流、PostgreSQL/Timescale、真实安全执行适配器。
+V1 已经形成完整、可运行的研究/Paper 闭环，但没有声称已经拥有经过长期样本验证的盈利 Alpha。后续重点应该是：历史盘口数据仓库、Resolved Market Calibration、事件/新闻 Agent、Cross-Market 关系图、Smart Money、PostgreSQL/Timescale、真实安全执行适配器。

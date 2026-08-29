@@ -44,12 +44,20 @@ class QuantService:
         return await self.opportunity_for(m)
     async def paper_order(self,req:PaperOrderRequest):
         op=await self.get_market(req.market_id); acc=self.broker.account()
-        pred=op.prediction
-        expected=pred.direction
-        if req.side=="BUY" and expected not in (req.outcome,"PASS"):
-            pred=pred.model_copy(update={"direction":"PASS"})
-        decision=self.risk.evaluate(pred,op.features,acc.equity,acc.exposure,req.notional)
-        if not decision.approved: return decision,None
         ref=op.market.yes_price if req.outcome=="YES" else op.market.no_price
+        if req.side == "SELL":
+            # Risk-reducing exits must remain possible even when the entry signal disappears.
+            pos=next((p for p in acc.positions if p.market_id==req.market_id and p.outcome==req.outcome),None)
+            max_exit=(pos.shares*ref) if pos else 0.0
+            from .models import RiskDecision
+            if req.notional > max_exit + 1e-9:
+                return RiskDecision(approved=False,reasons=[f"卖出金额超过现有持仓市值 ${max_exit:.2f}"],max_notional=max_exit,suggested_notional=max_exit),None
+            decision=RiskDecision(approved=True,reasons=["风险降低型退出"],max_notional=max_exit,suggested_notional=req.notional)
+        else:
+            pred=op.prediction
+            if pred.direction != req.outcome:
+                pred=pred.model_copy(update={"direction":"PASS"})
+            decision=self.risk.evaluate(pred,op.features,acc.equity,acc.exposure,req.notional,self.broker.market_exposure(req.market_id))
+            if not decision.approved: return decision,None
         trade=self.broker.execute(req.market_id,req.outcome,req.side,req.notional,ref); self.storage.save_trade(trade)
         return decision,trade

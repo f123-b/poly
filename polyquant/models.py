@@ -39,6 +39,7 @@ class FeatureSnapshot(BaseModel):
     bid_depth: float = 0.0
     ask_depth: float = 0.0
     orderbook_imbalance: float = 0.0
+    liquidity: float = 0.0
     liquidity_score: float = 0.0
     volume_score: float = 0.0
     uncertainty_score: float = 0.0

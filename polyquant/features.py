@@ -19,4 +19,4 @@ class FeatureEngine:
         uncertainty = 1.0 - min(1.0, abs(market.yes_price-0.5)*2)
         spread_score = 1.0 - _clamp(spread/0.10)
         opportunity = 100*(0.28*liquidity_score + 0.22*volume_score + 0.18*uncertainty + 0.17*abs(imbalance) + 0.15*spread_score)
-        return FeatureSnapshot(market_id=market.id, market_probability=market.yes_price, best_bid=best_bid, best_ask=best_ask, spread=spread, bid_depth=bid_depth, ask_depth=ask_depth, orderbook_imbalance=imbalance, liquidity_score=liquidity_score, volume_score=volume_score, uncertainty_score=uncertainty, opportunity_score=round(opportunity,2))
+        return FeatureSnapshot(market_id=market.id, market_probability=market.yes_price, best_bid=best_bid, best_ask=best_ask, spread=spread, bid_depth=bid_depth, ask_depth=ask_depth, orderbook_imbalance=imbalance, liquidity=market.liquidity, liquidity_score=liquidity_score, volume_score=volume_score, uncertainty_score=uncertainty, opportunity_score=round(opportunity,2))

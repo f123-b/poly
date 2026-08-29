@@ -16,6 +16,7 @@ class PaperBroker:
     def mark(self, market_id:str, outcome:str, price:float):
         if (market_id,outcome) in self.positions: self.positions[(market_id,outcome)].mark=price
     def exposure(self)->float: return sum(abs(p.shares*p.mark) for p in self.positions.values())
+    def market_exposure(self, market_id:str)->float: return sum(abs(p.shares*p.mark) for (mid,_),p in self.positions.items() if mid==market_id)
     def equity(self)->float: return self.cash+sum(p.shares*p.mark for p in self.positions.values())
     def execute(self, market_id:str, outcome:str, side:str, notional:float, reference_price:float)->PaperTrade:
         slip=self.slippage_bps/10_000
