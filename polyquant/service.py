@@ -15,23 +15,21 @@ from .risk import RiskEngine
 from .smart_money import SmartMoneyClient
 from .storage import Storage
 from .live_execution import PolymarketLiveExecutor,REQUEST_CONFIRMATION
-
 class QuantService:
     def __init__(self,settings:Settings):
-        self.s=settings;self.client=PolymarketDataClient();self.features=FeatureEngine();self.prob=ProbabilityEngine(settings);self.risk=RiskEngine(settings)
-        self.broker=PaperBroker(settings.starting_cash);self.storage=Storage(settings.db_path);self.live=PolymarketLiveExecutor(settings);self.events=EventIntelligence(settings.event_feed_url);self.graph=MarketGraph();self.smart=SmartMoneyClient(demo=settings.mode=="demo" or settings.smart_money_demo);self._markets:dict[str,Market]={};self.last_source="demo"
+        self.s=settings;self.client=PolymarketDataClient();self.features=FeatureEngine();self.prob=ProbabilityEngine(settings);self.risk=RiskEngine(settings);self.broker=PaperBroker(settings.starting_cash);self.storage=Storage(settings.db_path);self.live=PolymarketLiveExecutor(settings);self.events=EventIntelligence(settings.event_feed_url);self.graph=MarketGraph();self.smart=SmartMoneyClient(demo=settings.mode=='demo' or settings.smart_money_demo);self._markets={};self.last_source='demo'
     async def markets(self)->list[Market]:
         data=[]
-        if self.s.mode!="demo":
+        if self.s.mode!='demo':
             try:data=await self.client.list_markets(self.s.scan_limit)
             except Exception:data=[]
-        if not data:data=DEMO_MARKETS[:self.s.scan_limit];self.last_source="demo"
-        else:self.last_source="polymarket"
+        if not data:data=DEMO_MARKETS[:self.s.scan_limit];self.last_source='demo'
+        else:self.last_source='polymarket'
         self._markets={m.id:m for m in data}
         for m in data:self.storage.save_market_snapshot(m)
-        return data
+        self.storage.prune_research(self.s.snapshot_retention_per_market);return data
     async def _book(self,m:Market)->OrderBook:
-        if m.source=="polymarket" and m.yes_token_id:
+        if m.source=='polymarket' and m.yes_token_id:
             try:return await self.client.get_order_book(m.yes_token_id)
             except Exception:pass
         return demo_book(m)
@@ -40,17 +38,14 @@ class QuantService:
         if evidence is None:
             try:evidence=await self.events.for_market(m)
             except Exception:evidence=MarketEvidence(market_id=m.id)
-        self.storage.save_evidence(m.id,evidence.model_dump_json());p=await self.prob.predict(m,f,evidence);self.storage.save_prediction(p)
-        self.broker.mark(m.id,"YES",m.yes_price);self.broker.mark(m.id,"NO",m.no_price)
-        return Opportunity(market=m,features=f,prediction=p)
+        self.storage.save_evidence(m.id,evidence.model_dump_json());p=await self.prob.predict(m,f,evidence);self.storage.save_prediction(p);self.broker.mark(m.id,'YES',m.yes_price);self.broker.mark(m.id,'NO',m.no_price);return Opportunity(market=m,features=f,prediction=p)
     async def opportunities(self,limit:int=12)->list[Opportunity]:
         ms=await self.markets();sem=asyncio.Semaphore(6)
         try:items=await self.events.fetch()
         except Exception:items=[]
         async def one(m):
             async with sem:
-                evidence=await self.events.for_market(m,items=items) if items else MarketEvidence(market_id=m.id)
-                return await self.opportunity_for(m,evidence)
+                evidence=await self.events.for_market(m,items=items) if items else MarketEvidence(market_id=m.id);return await self.opportunity_for(m,evidence)
         ops=await asyncio.gather(*(one(m) for m in ms[:max(limit,1)]));return sorted(ops,key=lambda x:(x.prediction.edge,x.features.opportunity_score),reverse=True)
     async def get_market(self,market_id:str)->Opportunity:
         if market_id not in self._markets:await self.markets()
@@ -69,54 +64,59 @@ class QuantService:
         market=self._markets.get(market_id)
         if not market:raise KeyError(market_id)
         local=self.storage.market_history(market_id,limit or self.s.history_limit);remote=[]
-        if market.source=="polymarket" and market.yes_token_id:
-            try:remote=[{"timestamp":t,"yes_price":p} for t,p in await self.client.price_history(market.yes_token_id,"1d",60)]
+        if market.source=='polymarket' and market.yes_token_id:
+            try:remote=[{'timestamp':t,'yes_price':p} for t,p in await self.client.price_history(market.yes_token_id,'1d',60)]
             except Exception:remote=[]
-        return {"market_id":market_id,"source":"polymarket-history" if remote else "local-snapshots","points":remote or local}
+        return {'market_id':market_id,'source':'polymarket-history' if remote else 'local-snapshots','points':remote or local}
     def research_history(self,market_id:str,limit:int=100)->dict:return self.storage.research_history(market_id,limit)
     async def trader_profile(self,wallet:str)->dict:
-        profile=await self.smart.profile(wallet);self.storage.save_trader_profile(profile["wallet"],profile);return profile
+        profile=await self.smart.profile(wallet);self.storage.save_trader_profile(profile['wallet'],profile);return profile
     async def smart_money_flow(self,market_id:str)->dict:
         if market_id not in self._markets:await self.markets()
         market=self._markets.get(market_id)
         if not market:raise KeyError(market_id)
-        if market.source=="demo":return await self.smart.market_flow(market.condition_id or market.id)
-        if not market.condition_id:return {"market_id":market_id,"score":0.0,"reason":"condition_id unavailable"}
-        result=await self.smart.market_flow(market.condition_id);return {"market_id":market_id,**result}
-    def resolve(self,market_id:str,outcome:str):self.storage.save_resolution(market_id,1 if outcome=="YES" else 0);return {"market_id":market_id,"outcome":outcome,"saved":True}
+        if market.source=='demo':return await self.smart.market_flow(market.condition_id or market.id)
+        if not market.condition_id:return {'market_id':market_id,'score':0.0,'reason':'condition_id unavailable'}
+        result=await self.smart.market_flow(market.condition_id);return {'market_id':market_id,**result}
+    def resolve(self,market_id:str,outcome:str):self.storage.save_resolution(market_id,1 if outcome=='YES' else 0);return {'market_id':market_id,'outcome':outcome,'saved':True}
+    async def sync_resolutions(self,limit:int=100)->dict:
+        if self.s.mode=='demo':return {'source':'demo','scanned':0,'saved':0,'note':'Resolution sync is disabled in offline demo mode.'}
+        rows=await self.client.list_resolved_markets(limit);saved=0
+        for m,outcome in rows:self.storage.save_resolution(m.id,1 if outcome=='YES' else 0);saved+=1
+        return {'source':'polymarket','scanned':len(rows),'saved':saved,'calibration':self.historical_calibration()}
     def historical_calibration(self):
         probs,outcomes=self.storage.calibration_pairs()
-        if not probs:return {"samples":0,"brier_score":None,"log_loss":None,"ece":None,"bins":[]}
+        if not probs:return {'samples':0,'brier_score':None,'log_loss':None,'ece':None,'bins':[]}
         return calibration_metrics(probs,outcomes,bins=10).model_dump()
     def system_status(self)->dict:
-        acc=self.broker.account();return {"version":"3.0.0","data_source":self.last_source,"warehouse":self.storage.stats(),"paper":{"equity":acc.equity,"cash":acc.cash,"exposure":acc.exposure,"positions":len(acc.positions)},"risk":{"min_edge":self.s.min_edge,"min_confidence":self.s.min_confidence,"max_spread":self.s.max_spread,"min_liquidity":self.s.min_liquidity,"max_single_market_pct":self.s.max_single_market_pct,"max_total_exposure_pct":self.s.max_total_exposure_pct,"fractional_kelly":self.s.fractional_kelly},"live_execution_enabled":self.s.live_execution_enabled,"auto_execution":"paper-only"}
+        acc=self.broker.account();return {'version':'4.0.0','data_source':self.last_source,'warehouse':self.storage.stats(),'paper':{'equity':acc.equity,'cash':acc.cash,'exposure':acc.exposure,'positions':len(acc.positions),'trades':len(acc.trades)},'risk':{'min_edge':self.s.min_edge,'min_confidence':self.s.min_confidence,'max_spread':self.s.max_spread,'min_liquidity':self.s.min_liquidity,'max_single_market_pct':self.s.max_single_market_pct,'max_total_exposure_pct':self.s.max_total_exposure_pct,'fractional_kelly':self.s.fractional_kelly},'live_execution_enabled':self.s.live_execution_enabled,'auto_execution':'paper-only'}
     async def paper_order(self,req:PaperOrderRequest):
-        op=await self.get_market(req.market_id);acc=self.broker.account();ref=op.market.yes_price if req.outcome=="YES" else op.market.no_price
-        if req.side=="SELL":
+        op=await self.get_market(req.market_id);acc=self.broker.account();ref=op.market.yes_price if req.outcome=='YES' else op.market.no_price
+        if req.side=='SELL':
             pos=next((p for p in acc.positions if p.market_id==req.market_id and p.outcome==req.outcome),None);max_exit=(pos.shares*ref) if pos else 0.0
-            if req.notional>max_exit+1e-9:return RiskDecision(approved=False,reasons=[f"卖出金额超过现有持仓市值 ${max_exit:.2f}"],max_notional=max_exit,suggested_notional=max_exit),None
-            decision=RiskDecision(approved=True,reasons=["风险降低型退出"],max_notional=max_exit,suggested_notional=req.notional)
+            if req.notional>max_exit+1e-9:return RiskDecision(approved=False,reasons=[f'卖出金额超过现有持仓市值 ${max_exit:.2f}'],max_notional=max_exit,suggested_notional=max_exit),None
+            decision=RiskDecision(approved=True,reasons=['风险降低型退出'],max_notional=max_exit,suggested_notional=req.notional)
         else:
             pred=op.prediction
-            if pred.direction!=req.outcome:pred=pred.model_copy(update={"direction":"PASS"})
+            if pred.direction!=req.outcome:pred=pred.model_copy(update={'direction':'PASS'})
             decision=self.risk.evaluate(pred,op.features,acc.equity,acc.exposure,req.notional,self.broker.market_exposure(req.market_id))
             if not decision.approved:return decision,None
         trade=self.broker.execute(req.market_id,req.outcome,req.side,req.notional,ref);self.storage.save_trade(trade);return decision,trade
     async def live_order(self,req:LiveOrderRequest):
-        if req.confirmation!=REQUEST_CONFIRMATION:return RiskDecision(approved=False,reasons=[f"confirmation must equal {REQUEST_CONFIRMATION}"]),None
+        if req.confirmation!=REQUEST_CONFIRMATION:return RiskDecision(approved=False,reasons=[f'confirmation must equal {REQUEST_CONFIRMATION}']),None
         op=await self.get_market(req.market_id);p=op.prediction;f=op.features;reasons=[]
-        if op.market.source!="polymarket":reasons.append("Live execution only accepts real Polymarket markets")
-        if p.direction!=req.outcome or p.direction=="PASS":reasons.append("当前模型方向与请求不一致或无可交易 Edge")
-        if p.edge<self.s.min_edge:reasons.append(f"Edge {p.edge:.1%} < {self.s.min_edge:.1%}")
-        if p.confidence<self.s.min_confidence:reasons.append(f"Confidence {p.confidence:.1%} < {self.s.min_confidence:.1%}")
-        if f.spread>self.s.max_spread:reasons.append(f"Spread {f.spread:.1%} > {self.s.max_spread:.1%}")
-        if f.liquidity<self.s.min_liquidity:reasons.append(f"Liquidity ${f.liquidity:,.0f} < ${self.s.min_liquidity:,.0f}")
-        if req.notional>self.s.live_max_order_notional:reasons.append(f"实盘单笔上限 ${self.s.live_max_order_notional:.2f}")
+        if op.market.source!='polymarket':reasons.append('Live execution only accepts real Polymarket markets')
+        if p.direction!=req.outcome or p.direction=='PASS':reasons.append('当前模型方向与请求不一致或无可交易 Edge')
+        if p.edge<self.s.min_edge:reasons.append(f'Edge {p.edge:.1%} < {self.s.min_edge:.1%}')
+        if p.confidence<self.s.min_confidence:reasons.append(f'Confidence {p.confidence:.1%} < {self.s.min_confidence:.1%}')
+        if f.spread>self.s.max_spread:reasons.append(f'Spread {f.spread:.1%} > {self.s.max_spread:.1%}')
+        if f.liquidity<self.s.min_liquidity:reasons.append(f'Liquidity ${f.liquidity:,.0f} < ${self.s.min_liquidity:,.0f}')
+        if req.notional>self.s.live_max_order_notional:reasons.append(f'实盘单笔上限 ${self.s.live_max_order_notional:.2f}')
         day=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).isoformat();daily=self.storage.live_notional_since(day);market_used=self.storage.live_notional_since(day,req.market_id)
-        if daily+req.notional>self.s.live_max_daily_notional:reasons.append(f"实盘日累计上限 ${self.s.live_max_daily_notional:.2f}")
-        if market_used+req.notional>self.s.live_max_market_notional:reasons.append(f"单市场实盘累计上限 ${self.s.live_max_market_notional:.2f}")
-        token=op.market.yes_token_id if req.outcome=="YES" else op.market.no_token_id
-        if not token:reasons.append("市场缺少可交易 token id")
-        preflight=await self.live.preflight();reasons.extend(preflight["reasons"])
+        if daily+req.notional>self.s.live_max_daily_notional:reasons.append(f'实盘日累计上限 ${self.s.live_max_daily_notional:.2f}')
+        if market_used+req.notional>self.s.live_max_market_notional:reasons.append(f'单市场实盘累计上限 ${self.s.live_max_market_notional:.2f}')
+        token=op.market.yes_token_id if req.outcome=='YES' else op.market.no_token_id
+        if not token:reasons.append('市场缺少可交易 token id')
+        preflight=await self.live.preflight();reasons.extend(preflight['reasons'])
         if reasons:return RiskDecision(approved=False,reasons=list(dict.fromkeys(reasons)),max_notional=min(self.s.live_max_order_notional,max(0,self.s.live_max_daily_notional-daily))),None
-        result=await self.live.place_market_buy(token,req.notional);self.storage.save_live_trade(req.market_id,req.notional,result["submitted_at"],json.dumps(result,ensure_ascii=False));return RiskDecision(approved=True,reasons=["通过实盘硬门禁"],max_notional=self.s.live_max_order_notional,suggested_notional=req.notional),result
+        result=await self.live.place_market_buy(token,req.notional);self.storage.save_live_trade(req.market_id,req.notional,result['submitted_at'],json.dumps(result,ensure_ascii=False));return RiskDecision(approved=True,reasons=['通过实盘硬门禁'],max_notional=self.s.live_max_order_notional,suggested_notional=req.notional),result
