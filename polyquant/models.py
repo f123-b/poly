@@ -110,6 +110,10 @@ class LiveOrderRequest(BaseModel):
     notional: float = Field(gt=0)
     confirmation: str
 
+class ResolveMarketRequest(BaseModel):
+    market_id: str
+    outcome: Literal["YES", "NO"]
+
 class BacktestPoint(BaseModel):
     price: float
     model_probability: float
