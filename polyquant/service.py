@@ -19,9 +19,15 @@ from .live_execution import PolymarketLiveExecutor,REQUEST_CONFIRMATION
 
 class QuantService:
     def __init__(self,settings:Settings):
-        self.s=settings;self.client=PolymarketDataClient();self.features=FeatureEngine();self.prob=ProbabilityEngine(settings);self.risk=RiskEngine(settings);self.storage=Storage(settings.db_path);starting=self.storage.paper_starting_cash(settings.starting_cash);self.broker=PaperBroker(starting,settings.paper_fee_bps,settings.paper_slippage_bps);self.broker.restore(self.storage.paper_trades(),self.storage.latest_marks(),self.storage.paper_settlements());self.live=PolymarketLiveExecutor(settings);self.events=EventIntelligence(settings.event_feed_url);self.graph=MarketGraph();self.smart=SmartMoneyClient(demo=settings.mode=='demo' or settings.smart_money_demo);self.analytics=ModelAnalytics();self._markets={};self.last_source='demo'
+        self.s=settings;self.client=PolymarketDataClient();self.features=FeatureEngine();self.prob=ProbabilityEngine(settings);self.risk=RiskEngine(settings);self.storage=Storage(settings.db_path);starting=self.storage.paper_starting_cash(settings.starting_cash);self.broker=PaperBroker(starting,settings.paper_fee_bps,settings.paper_slippage_bps);self.broker.restore(self.storage.paper_trades(),self.storage.latest_marks(),self.storage.paper_settlements());self.live=PolymarketLiveExecutor(settings);self.events=EventIntelligence(settings.event_feed_url);self.graph=MarketGraph();self.smart=SmartMoneyClient(demo=settings.mode=='demo' or settings.smart_money_demo);self.analytics=ModelAnalytics();self._markets={};self.last_source='demo';self.realtime_cache=None
         for r in self.storage.resolution_rows():
             if self.broker.market_exposure(r['market_id'])>0 and not self.storage.settlement_exists(r['market_id']):self.storage.save_settlement(self.broker.settle(r['market_id'],r['outcome']))
+    def _live_market(self,m:Market)->Market:
+        cache=getattr(self,'realtime_cache',None)
+        if cache is None:return m
+        try:prices=cache.market_prices(m)
+        except Exception:prices=None
+        return m.model_copy(update={'yes_price':prices['yes_price'],'no_price':prices['no_price']}) if prices else m
     async def markets(self)->list[Market]:
         data=[]
         if self.s.mode!='demo':
@@ -29,16 +35,22 @@ class QuantService:
             except Exception:data=[]
         if not data:data=DEMO_MARKETS[:self.s.scan_limit];self.last_source='demo'
         else:self.last_source='polymarket'
-        self._markets={m.id:m for m in data}
+        data=[self._live_market(m) for m in data];self._markets={m.id:m for m in data}
         for m in data:self.storage.save_market_snapshot(m);self.broker.mark(m.id,'YES',m.yes_price);self.broker.mark(m.id,'NO',m.no_price)
         return data
     async def _book(self,m:Market)->OrderBook:
+        cache=getattr(self,'realtime_cache',None)
+        if cache is not None and m.yes_token_id:
+            try:
+                book=cache.book(m.yes_token_id)
+                if book is not None:return book
+            except Exception:pass
         if m.source=='polymarket' and m.yes_token_id:
             try:return await self.client.get_order_book(m.yes_token_id)
             except Exception:pass
         return demo_book(m)
     async def opportunity_for(self,m:Market,evidence:MarketEvidence|None=None)->Opportunity:
-        book=await self._book(m);f=self.features.compute(m,book);self.storage.save_feature_snapshot(f)
+        m=self._live_market(m);book=await self._book(m);f=self.features.compute(m,book);self.storage.save_feature_snapshot(f)
         if evidence is None:
             try:evidence=await self.events.for_market(m)
             except Exception:evidence=MarketEvidence(market_id=m.id)
@@ -100,7 +112,7 @@ class QuantService:
         if not probs:return {'samples':0,'brier_score':None,'log_loss':None,'ece':None,'bins':[]}
         return calibration_metrics(probs,outcomes,bins=10).model_dump()
     def system_status(self):
-        acc=self.broker.account();w=self.storage.stats();return {'version':'6.0.0','data_source':self.last_source,'warehouse':w,'paper':{'persistent':True,'starting_cash':acc.starting_cash,'equity':acc.equity,'cash':acc.cash,'exposure':acc.exposure,'positions':len(acc.positions),'trades_total':w['paper_trades'],'settlements':w['paper_settlements']},'audit':{'decisions':w['decision_audit']},'risk':{'min_edge':self.s.min_edge,'min_confidence':self.s.min_confidence,'max_spread':self.s.max_spread,'min_liquidity':self.s.min_liquidity,'max_single_market_pct':self.s.max_single_market_pct,'max_total_exposure_pct':self.s.max_total_exposure_pct,'fractional_kelly':self.s.fractional_kelly},'live_execution_enabled':self.s.live_execution_enabled,'auto_execution':'paper-only','auto_pyramiding':self.s.auto_allow_pyramiding}
+        acc=self.broker.account();w=self.storage.stats();cache=getattr(self,'realtime_cache',None);return {'version':'8.0.0','data_source':self.last_source,'warehouse':w,'paper':{'persistent':True,'starting_cash':acc.starting_cash,'equity':acc.equity,'cash':acc.cash,'exposure':acc.exposure,'positions':len(acc.positions),'trades_total':w['paper_trades'],'settlements':w['paper_settlements']},'audit':{'decisions':w['decision_audit']},'quant_data':{'realtime_cache_attached':cache is not None,'realtime_books':cache.snapshot()['books'] if cache is not None else 0},'risk':{'min_edge':self.s.min_edge,'min_confidence':self.s.min_confidence,'max_spread':self.s.max_spread,'min_liquidity':self.s.min_liquidity,'max_single_market_pct':self.s.max_single_market_pct,'max_total_exposure_pct':self.s.max_total_exposure_pct,'fractional_kelly':self.s.fractional_kelly},'live_execution_enabled':self.s.live_execution_enabled,'auto_execution':'paper-only','auto_pyramiding':self.s.auto_allow_pyramiding}
     def _audited(self,decision,market_id,prediction_id,mode,action,request,result_id=None):
         did=self.storage.save_decision(market_id,prediction_id,mode,action,request,decision.model_dump(exclude={'decision_id'}),result_id);return decision.model_copy(update={'decision_id':did})
     async def paper_order(self,req:PaperOrderRequest):

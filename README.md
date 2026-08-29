@@ -1,39 +1,59 @@
-# PolyQuant Intelligence V7
+# PolyQuant Intelligence V8
 
-Realtime prediction-market quantitative research, validation, Paper settlement and decision-audit terminal.
+A realtime prediction-market quantitative research and validation terminal where the **same fresh quote/order-book data can drive the UI, Feature Engine, Probability Engine and server-side risk revalidation**.
 
 Core chain:
 
-`Public Market Stream → Realtime Cache → Browser WebSocket → Research/Prediction → Risk Audit → Persistent Paper → Resolution/Settlement → Scorecard`
+`Official Public WSS → Freshness-Checked Cache → Market Prior + OrderBook Features → Probability/Edge → Risk Audit → Persistent Paper → Settlement/Calibration`
 
-## V7 realtime layer
+## V8: realtime Quant Core
 
-- `RealtimeMarketCache` stores current public quotes and full order books when book events are available.
-- Non-Demo mode **prefers the current official Polymarket unified Python SDK**: `AsyncPublicClient.subscribe(MarketSpec(...))`.
-- If `polymarket-client` is not installed or the upstream stream fails, the engine automatically falls back to public REST polling.
-- Demo mode provides a deterministic network-free realtime heartbeat path for CI/local development.
-- Local browser clients subscribe to `WS /ws/markets`; slow clients use bounded queues so they cannot create unbounded server memory growth.
-- Realtime data is read-only. It has no execution reference and cannot bypass RiskEngine.
+V7 introduced public streaming and browser WebSocket delivery. V8 moves realtime data into the actual quantitative decision path:
 
-Install the official upstream realtime adapter when desired:
+- `QuantService` uses fresh realtime YES/NO quotes to normalize the market probability before prediction.
+- `FeatureEngine` receives a fresh cached full YES order book when available.
+- Cache entries older than `POLYQUANT_REALTIME_STALE_SECONDS` are ignored automatically.
+- Missing/stale books fall back to public CLOB REST; Demo falls back to deterministic `demo_book`.
+- REST realtime fallback refreshes full books only for the top configurable N markets to control request volume.
+- Paper/Live requests call `get_market()` and therefore re-run Feature/Probability/Risk using the current server-side realtime cache when available.
+
+This removes the V7 gap where the browser could see newer prices than the strategy engine.
+
+## Realtime setup
+
+Base install works with REST fallback. For the current official Polymarket unified SDK public stream:
 
 ```bash
 pip install -e '.[realtime]'
 ```
 
-Base install still works without it and falls back automatically.
+Configuration:
 
-## Realtime APIs
+```env
+POLYQUANT_REALTIME_ENABLED=true
+POLYQUANT_REALTIME_PREFER_SDK=true
+POLYQUANT_REALTIME_STALE_SECONDS=20
+POLYQUANT_REALTIME_BOOK_REFRESH_LIMIT=5
+```
 
+APIs:
 - `GET /api/realtime/status`
 - `GET /api/realtime/snapshot`
 - `WS /ws/markets`
 
-`/api/system/status` and `/api/health` also expose realtime mode, reconnect/fallback counters, cache size and last event time.
+## Existing production-validation controls
 
-## Existing platform
-
-V6 features remain: persistent starting bankroll, Paper trade+settlement replay, Resolution settlement at $1/$0, Prediction→RiskDecision→Trade audit chain, model/category scorecards, CSV dataset export, maintenance/resolution sync, conservative backtest, Smart Money, evidence-aware probability and fail-closed optional live execution.
+- persistent Paper trade ledger and starting bankroll
+- automatic $1/$0 Paper settlement on Resolution
+- Prediction ID → Risk Decision ID → Trade audit chain
+- anti-pyramiding automatic Paper by default
+- model/category Brier/LogLoss/ECE scorecards
+- CSV prediction dataset export
+- maintenance + conservative Resolution sync
+- conservative liquidity/latency/slippage/partial-fill backtest
+- experiments and validation gate
+- Smart Money, bounded Evidence and optional low-weight LLM research input
+- optional Live adapter remains disabled/fail-closed by default
 
 ## Quick start
 
@@ -45,7 +65,7 @@ docker compose up --build
 ```
 Open `http://localhost:8000`.
 
-For fully offline validation:
+Offline validation:
 ```bash
 pip install -e '.[dev]'
 POLYQUANT_MODE=demo python -m polyquant
@@ -53,7 +73,7 @@ POLYQUANT_MODE=demo python -m polyquant
 
 ## Safety
 
-Realtime, AI, Evidence and Smart Money are data/research inputs only. Automatic execution remains Paper-only. Live remains disabled by default, explicit-confirmation gated, hard-notional limited, and geoblock fail-closed. No restriction-bypass path is included.
+Realtime data can influence probability/features, but never calls execution. All execution still passes deterministic server-side RiskEngine and audit. Automatic execution remains Paper-only. Live remains explicit-confirmation gated, hard-notional limited and geoblock fail-closed. No geographic-restriction bypass is present.
 
 ## Validate
 ```bash
