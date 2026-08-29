@@ -11,15 +11,17 @@ def fractional_kelly(prob: float, price: float, fraction: float) -> float:
 
 class RiskEngine:
     def __init__(self, settings: Settings): self.s=settings
-    def evaluate(self, prediction: Prediction, features: FeatureSnapshot, equity: float, current_exposure: float, requested_notional: float) -> RiskDecision:
+    def evaluate(self, prediction: Prediction, features: FeatureSnapshot, equity: float, current_exposure: float, requested_notional: float, current_market_exposure: float = 0.0) -> RiskDecision:
         reasons=[]
         if prediction.direction == "PASS": reasons.append("预测 Edge 未达到开仓阈值")
         if prediction.edge < self.s.min_edge: reasons.append(f"Edge {prediction.edge:.1%} < {self.s.min_edge:.1%}")
         if prediction.confidence < self.s.min_confidence: reasons.append(f"Confidence {prediction.confidence:.1%} < {self.s.min_confidence:.1%}")
         if features.spread > self.s.max_spread: reasons.append(f"Spread {features.spread:.1%} > {self.s.max_spread:.1%}")
+        if features.liquidity < self.s.min_liquidity: reasons.append(f"Liquidity ${features.liquidity:,.0f} < ${self.s.min_liquidity:,.0f}")
         max_single=equity*self.s.max_single_market_pct
+        single_remaining=max(0.0,max_single-current_market_exposure)
         remaining=max(0.0,equity*self.s.max_total_exposure_pct-current_exposure)
-        max_notional=min(max_single,remaining)
+        max_notional=min(single_remaining,remaining)
         if requested_notional > max_notional+1e-9: reasons.append(f"请求仓位超过硬上限 ${max_notional:.2f}")
         k=fractional_kelly(prediction.model_probability if prediction.direction=="YES" else 1-prediction.model_probability, prediction.market_probability if prediction.direction=="YES" else 1-prediction.market_probability, self.s.fractional_kelly)
         suggested=min(max_notional,equity*k*prediction.confidence)
