@@ -1,34 +1,41 @@
-# PolyQuant Intelligence V3
+# PolyQuant Intelligence V4
 
-Polymarket / prediction-market **量化分析 + 概率预测 + 事件研究 + 历史研究仓库 + Smart Money + 实验平台 + 回测 + Paper Trading + 风控 + 受控实盘适配**终端。
+A runnable Polymarket / prediction-market quantitative research, forecasting, validation, backtesting and paper-trading terminal.
 
-核心闭环：
+Core loop:
 
-`Market → Feature → Evidence → Probability Components → Edge → Strategy → Hard Risk → Paper/Live Gate → Audit → Resolution → Calibration → Experiment`
+`Market → Feature → Evidence → Probability → Edge → Hard Risk → Paper → Resolution → Calibration → Experiment → Validation Gate`
 
-## V3 已完成
+## What V4 adds
 
-- Polymarket 公共市场发现、订单簿、历史价格与 Demo fallback
-- Spread / Depth / OrderBook Imbalance / Liquidity / Opportunity Scanner
-- **可解释概率组件**：Market、OrderBook、Evidence、LLM、Shrink 等组件单独审计
-- **Evidence-aware Probability**：事件证据真正进入概率模型，但受 `EVIDENCE_MAX_ADJUSTMENT` 硬上限约束
-- Event Intelligence：JSON Feed、市场证据匹配、可靠度/新鲜度/情绪聚合
-- Market Graph：阈值包含关系与逻辑概率异常检测
-- **Research Warehouse**：Market / Feature / Prediction / Evidence 历史快照、研究历史查询
-- **Resolved Calibration**：Brier / Log Loss / ECE
-- **Smart Money V3**：排行榜、Trader 画像、持仓/已平仓统计、市场 Smart-Money Flow
-- **Experiment Registry**：实验参数、指标、备注持久化；提供离线 demo grid
-- Fractional Kelly、单市场/总敞口/Edge/Confidence/Spread/Liquidity 硬风控
-- Paper Broker + Auto Paper Trader
-- 回测：费用、滑点、ROI、Max Drawdown、Win Rate、Sharpe
-- 系统/风控状态 API 与仓库统计
-- 可选真实执行：官方 Python SDK、geoblock fail-closed、双重确认、严格名义金额限制
-- FastAPI + 中文 Quant Dashboard V3
-- Docker、完全离线 Demo、GitHub Actions CI、单元测试
+V4 builds on the V3 research warehouse and adds the controls needed for long-running strategy validation:
 
-> 自动循环始终只调用 Paper Broker。Live 真钱执行默认关闭，不能通过 AI、事件源或策略绕过硬风控、确认短语或 geoblock preflight。
+- conservative backtest execution with liquidity participation limits
+- explicit latency + slippage + fee accounting
+- partial-fill simulation and turnover/cost metrics
+- public resolved-market sync for calibration labels (non-Demo mode)
+- strategy validation gate using resolved samples, Paper trades, Brier score, ROI, drawdown and Sharpe
+- research-snapshot retention to prevent unbounded SQLite growth
+- V4 dashboard controls for Resolution sync and Validation Gate
 
-## 启动
+The validation gate can recommend `research`, `paper`, or `shadow-live`, but **never unlocks real-money execution automatically**.
+
+## Existing platform capabilities
+
+- Polymarket public market discovery, order books and price history with Demo fallback
+- persistent market / feature / prediction / evidence research warehouse
+- bounded evidence-aware probability components
+- optional capped OpenAI-compatible research model
+- cross-market relation/anomaly analysis
+- Smart Money leaderboard, trader profiles and market-flow scoring
+- experiment registry and demo parameter grid
+- resolved-market Brier / Log Loss / ECE calibration
+- Fractional Kelly, portfolio exposure rules and hard RiskEngine
+- Paper Broker + automatic Paper trading loop
+- optional fail-closed live executor with geoblock preflight and explicit per-order confirmation
+- Chinese browser dashboard, Docker, CI and offline smoke validation
+
+## Quick start
 
 ```bash
 git clone https://github.com/f123-b/poly.git
@@ -37,9 +44,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-打开 `http://localhost:8000`。
+Open `http://localhost:8000`.
 
-本地离线运行：
+Fully offline:
 
 ```bash
 python -m venv .venv
@@ -49,87 +56,66 @@ pip install -e '.[dev]'
 POLYQUANT_MODE=demo python -m polyquant
 ```
 
-## 关键设计
+## V4 APIs
 
-### 1. 证据不是交易指令
-
-外部事件源只生成结构化 Evidence。Evidence 对最终概率的影响默认最多 ±3.5 个百分点，随后概率仍会向市场价格收缩。AI Research 同样只是低权重研究输入，无法调用执行器。
-
-### 2. 历史仓库
-
-SQLite 零配置模式现在保存：
-
-- `market_snapshots`
-- `feature_snapshots`
-- `predictions`
-- `evidence_snapshots`
-- `resolutions`
-- `trader_profiles`
-- `experiments`
-- Paper/Live 审计记录
-
-接口层保持可迁移设计，后续可替换 PostgreSQL/TimescaleDB。
-
-### 3. Smart Money
-
-V3 使用 Polymarket Data API 的 leaderboard / positions / closed-positions / activity / trades 数据构建 Trader 画像和市场净流评分。Demo 模式提供确定性离线数据。
-
-### 4. Experiment
-
-策略参数和结果不再散落在日志中。每次实验可以持久化：名称、策略、参数、指标、备注，并可比较历史实验。
-
-## 关键 API
-
-### 市场与研究
-
-- `GET /api/health`
-- `GET /api/system/status`
+Research/data:
 - `GET /api/markets`
-- `GET /api/opportunities?limit=12`
-- `GET /api/markets/{id}`
+- `GET /api/opportunities`
 - `GET /api/markets/{id}/history`
 - `GET /api/markets/{id}/research-history`
 - `GET /api/markets/{id}/evidence`
 - `GET /api/markets/{id}/smart-money`
-- `GET /api/events`
-- `GET /api/cross-market/graph-anomalies`
+- `GET /api/system/status`
 
-### Smart Money
-
-- `GET /api/smart-money/leaderboard`
-- `GET /api/smart-money/traders/{wallet}`
-
-### Calibration / Experiments
-
+Calibration/validation:
 - `GET /api/calibration/history`
 - `POST /api/calibration/resolve`
-- `GET /api/experiments`
-- `POST /api/experiments`
+- `POST /api/calibration/sync`
+- `POST /api/validation/gate`
+
+Research experiments/backtest:
+- `GET/POST /api/experiments`
 - `POST /api/experiments/demo-grid`
+- `POST /api/backtest`
+- `POST /api/backtest/demo`
 
-### Trading / Backtest
-
+Paper/live:
 - `GET /api/paper/account`
 - `POST /api/paper/orders`
 - `GET|POST /api/auto/*`
-- `POST /api/backtest`
-- `POST /api/backtest/demo`
 - `GET /api/live/preflight`
-- `POST /api/live/orders`（默认禁用）
+- `POST /api/live/orders`
 
-## 安全边界
+## Conservative backtest input
 
-V3 不声称已经拥有经过长期真实样本证明的盈利 Alpha。真实资金执行必须独立安装 `.[live]`、显式开启配置、通过所在地/geoblock 检查，并在每笔请求提供固定确认字符串。系统不包含任何绕过地域限制、代理规避或关闭硬风控的路径。
+Each point may include available liquidity:
 
-## 开发验证
+```json
+{"price":0.42,"model_probability":0.55,"available_liquidity":1000}
+```
+
+`execution_mode=conservative` caps each fill to `available_liquidity * max_participation`, applies `slippage_bps + latency_bps`, tracks fees, slippage cost, turnover and partial fills. Historical order-book depth is not always available, so this is deliberately a conservative approximation rather than a claim of exact replay.
+
+## Resolution sync
+
+`POST /api/calibration/sync` reads recently closed public markets and only labels a market when YES/NO prices are effectively settled (>= 0.995 vs <= 0.005). Ambiguous closed markets are skipped. Demo mode performs no network resolution sync.
+
+## Safety invariants
+
+1. AI, evidence and Smart Money cannot call execution directly.
+2. Automatic execution is Paper-only.
+3. RiskEngine remains authoritative over entries.
+4. Validation Gate never enables live trading.
+5. Live trading is disabled by default, geoblock checked, explicitly confirmed, and hard-notional limited.
+6. No proxy/VPN/geographic-restriction bypass logic is included.
+7. Backtest/Paper performance is not a guarantee of future profitability.
+
+## Validation
 
 ```bash
 pip install -e '.[dev]'
-python -m compileall -q polyquant tests
+python -m compileall -q polyquant tests scripts
+node --check web/app.js
 pytest -q
 POLYQUANT_MODE=demo python scripts/smoke.py
 ```
-
-CI 会执行以上核心验证。
-
-更多设计见 `ARCHITECTURE.md`、`docs/V3_PLAN.md`、`docs/V3_SCHEMA.md`、`docs/V3_ACCEPTANCE.md`。
