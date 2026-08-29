@@ -1,19 +1,22 @@
 from __future__ import annotations
 import asyncio
+import json
+from datetime import datetime, timezone
 from .config import Settings
 from .demo_data import DEMO_MARKETS, demo_book
 from .features import FeatureEngine
-from .models import Market, Opportunity, OrderBook, PaperOrderRequest
+from .models import Market, Opportunity, OrderBook, PaperOrderRequest, LiveOrderRequest, RiskDecision
 from .polymarket import PolymarketDataClient
 from .portfolio import PaperBroker
 from .probability import ProbabilityEngine
 from .risk import RiskEngine
 from .storage import Storage
+from .live_execution import PolymarketLiveExecutor, REQUEST_CONFIRMATION
 
 class QuantService:
     def __init__(self,settings:Settings):
         self.s=settings; self.client=PolymarketDataClient(); self.features=FeatureEngine(); self.prob=ProbabilityEngine(settings); self.risk=RiskEngine(settings)
-        self.broker=PaperBroker(settings.starting_cash); self.storage=Storage(settings.db_path); self._markets:dict[str,Market]={}; self.last_source="demo"
+        self.broker=PaperBroker(settings.starting_cash); self.storage=Storage(settings.db_path); self.live=PolymarketLiveExecutor(settings); self._markets:dict[str,Market]={}; self.last_source="demo"
     async def markets(self)->list[Market]:
         data=[]
         if self.s.mode!="demo":
@@ -61,3 +64,29 @@ class QuantService:
             if not decision.approved: return decision,None
         trade=self.broker.execute(req.market_id,req.outcome,req.side,req.notional,ref); self.storage.save_trade(trade)
         return decision,trade
+
+    async def live_order(self, req:LiveOrderRequest):
+        if req.confirmation != REQUEST_CONFIRMATION:
+            return RiskDecision(approved=False,reasons=[f"confirmation must equal {REQUEST_CONFIRMATION}"]),None
+        op=await self.get_market(req.market_id)
+        p=op.prediction; f=op.features
+        reasons=[]
+        if op.market.source != "polymarket": reasons.append("Live execution only accepts real Polymarket markets")
+        if p.direction != req.outcome or p.direction == "PASS": reasons.append("当前模型方向与请求不一致或无可交易 Edge")
+        if p.edge < self.s.min_edge: reasons.append(f"Edge {p.edge:.1%} < {self.s.min_edge:.1%}")
+        if p.confidence < self.s.min_confidence: reasons.append(f"Confidence {p.confidence:.1%} < {self.s.min_confidence:.1%}")
+        if f.spread > self.s.max_spread: reasons.append(f"Spread {f.spread:.1%} > {self.s.max_spread:.1%}")
+        if f.liquidity < self.s.min_liquidity: reasons.append(f"Liquidity ${f.liquidity:,.0f} < ${self.s.min_liquidity:,.0f}")
+        if req.notional > self.s.live_max_order_notional: reasons.append(f"实盘单笔上限 ${self.s.live_max_order_notional:.2f}")
+        day=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0).isoformat()
+        daily=self.storage.live_notional_since(day); market_used=self.storage.live_notional_since(day,req.market_id)
+        if daily+req.notional > self.s.live_max_daily_notional: reasons.append(f"实盘日累计上限 ${self.s.live_max_daily_notional:.2f}")
+        if market_used+req.notional > self.s.live_max_market_notional: reasons.append(f"单市场实盘累计上限 ${self.s.live_max_market_notional:.2f}")
+        token=op.market.yes_token_id if req.outcome=="YES" else op.market.no_token_id
+        if not token: reasons.append("市场缺少可交易 token id")
+        preflight=await self.live.preflight()
+        reasons.extend(preflight["reasons"])
+        if reasons: return RiskDecision(approved=False,reasons=list(dict.fromkeys(reasons)),max_notional=min(self.s.live_max_order_notional,max(0,self.s.live_max_daily_notional-daily))),None
+        result=await self.live.place_market_buy(token,req.notional)
+        self.storage.save_live_trade(req.market_id,req.notional,result["submitted_at"],json.dumps(result,ensure_ascii=False))
+        return RiskDecision(approved=True,reasons=["通过实盘硬门禁"],max_notional=self.s.live_max_order_notional,suggested_notional=req.notional),result

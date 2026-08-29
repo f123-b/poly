@@ -104,6 +104,12 @@ class PaperAccount(BaseModel):
     positions: list[PaperPosition] = Field(default_factory=list)
     trades: list[PaperTrade] = Field(default_factory=list)
 
+class LiveOrderRequest(BaseModel):
+    market_id: str
+    outcome: Literal["YES", "NO"]
+    notional: float = Field(gt=0)
+    confirmation: str
+
 class BacktestPoint(BaseModel):
     price: float
     model_probability: float
