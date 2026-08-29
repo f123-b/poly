@@ -1,21 +1,39 @@
-# PolyQuant Intelligence V6
+# PolyQuant Intelligence V7
 
-Prediction-market quantitative research and validation terminal with persistent Paper accounting, automatic settlement and end-to-end decision audit.
+Realtime prediction-market quantitative research, validation, Paper settlement and decision-audit terminal.
 
 Core chain:
 
-`Market → Evidence/Features → Prediction ID → Risk Decision ID → Paper/Live Result → Resolution → Paper Settlement → Calibration/Scorecard`
+`Public Market Stream → Realtime Cache → Browser WebSocket → Research/Prediction → Risk Audit → Persistent Paper → Resolution/Settlement → Scorecard`
 
-## V6 adds
+## V7 realtime layer
 
-- **Automatic Paper settlement**: when a market is resolved, winning shares pay `$1`, losing shares pay `$0`, cash and realized PnL are updated, positions are closed, and the settlement is persisted.
-- **Settlement replay after restart**: trades and settlements are replayed chronologically, so a restarted process reconstructs the same Paper account.
-- **Persistent starting bankroll**: the first Paper starting cash is stored in SQLite; changing `.env` later does not silently rewrite historical account economics.
-- **Decision audit ledger**: each accepted/rejected Paper or Live request records market, Prediction ID, action, request, RiskDecision and result ID.
-- **Trade traceability**: `GET /api/audit/trades/{trade_id}` traces a Paper trade back to its risk decision and prediction.
-- **Resolved-market lock**: new Paper entries are rejected once a market has a recorded resolution.
+- `RealtimeMarketCache` stores current public quotes and full order books when book events are available.
+- Non-Demo mode **prefers the current official Polymarket unified Python SDK**: `AsyncPublicClient.subscribe(MarketSpec(...))`.
+- If `polymarket-client` is not installed or the upstream stream fails, the engine automatically falls back to public REST polling.
+- Demo mode provides a deterministic network-free realtime heartbeat path for CI/local development.
+- Local browser clients subscribe to `WS /ws/markets`; slow clients use bounded queues so they cannot create unbounded server memory growth.
+- Realtime data is read-only. It has no execution reference and cannot bypass RiskEngine.
 
-V5 capabilities remain: model/category scorecards, CSV/JSON dataset export, maintenance loop, anti-pyramiding automatic Paper, conservative backtest, Smart Money, evidence-aware probability, experiments and validation gates.
+Install the official upstream realtime adapter when desired:
+
+```bash
+pip install -e '.[realtime]'
+```
+
+Base install still works without it and falls back automatically.
+
+## Realtime APIs
+
+- `GET /api/realtime/status`
+- `GET /api/realtime/snapshot`
+- `WS /ws/markets`
+
+`/api/system/status` and `/api/health` also expose realtime mode, reconnect/fallback counters, cache size and last event time.
+
+## Existing platform
+
+V6 features remain: persistent starting bankroll, Paper trade+settlement replay, Resolution settlement at $1/$0, Prediction→RiskDecision→Trade audit chain, model/category scorecards, CSV dataset export, maintenance/resolution sync, conservative backtest, Smart Money, evidence-aware probability and fail-closed optional live execution.
 
 ## Quick start
 
@@ -27,29 +45,15 @@ docker compose up --build
 ```
 Open `http://localhost:8000`.
 
-Offline:
+For fully offline validation:
 ```bash
 pip install -e '.[dev]'
 POLYQUANT_MODE=demo python -m polyquant
 ```
 
-## Audit / settlement APIs
-
-- `GET /api/audit/decisions?limit=100`
-- `GET /api/audit/trades/{trade_id}`
-- `POST /api/calibration/resolve` — saves resolution and settles matching Paper position
-- `POST /api/calibration/sync` — conservative public resolution sync + Paper settlement
-- `GET /api/paper/account`
-
-Research/validation:
-- `GET /api/analytics/scorecards`
-- `GET /api/datasets/predictions.csv`
-- `GET /api/validation/auto`
-- `GET /api/maintenance/status`
-
 ## Safety
 
-Automatic execution is still Paper-only. Validation and scorecards never unlock real money. Live execution remains disabled by default, explicit-confirmation gated, hard-notional limited, and geoblock fail-closed. No restriction-bypass logic is included.
+Realtime, AI, Evidence and Smart Money are data/research inputs only. Automatic execution remains Paper-only. Live remains disabled by default, explicit-confirmation gated, hard-notional limited, and geoblock fail-closed. No restriction-bypass path is included.
 
 ## Validate
 ```bash

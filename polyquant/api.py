@@ -1,7 +1,7 @@
 from __future__ import annotations
-import csv,io
+import asyncio,csv,io
 from pathlib import Path
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI,HTTPException,WebSocket,WebSocketDisconnect
 from fastapi.responses import FileResponse,Response
 from fastapi.staticfiles import StaticFiles
 from .backtest import Backtester
@@ -11,16 +11,32 @@ from .strategies import CrossMarketAnalyzer
 from .config import get_settings
 from .experiments import ExperimentRegistry
 from .maintenance import MaintenanceLoop
+from .realtime import RealtimeEngine
 from .validation import StrategyValidator
 from .models import BacktestRequest,ExperimentRequest,LiveOrderRequest,PaperOrderRequest,ResolveMarketRequest,ValidationGateRequest
 from .service import QuantService
 ROOT=Path(__file__).resolve().parent.parent
-settings=get_settings();service=QuantService(settings);backtester=Backtester();cross_market=CrossMarketAnalyzer();experiments=ExperimentRegistry(service.storage,backtester);validator=StrategyValidator();auto_trader=AutoTrader(service,settings.auto_interval_seconds,settings.auto_order_notional,settings.auto_max_trades_per_cycle,settings.auto_allow_pyramiding);maintenance=MaintenanceLoop(service,settings.maintenance_interval_seconds,settings.maintenance_resolution_sync,settings.maintenance_resolution_limit)
-app=FastAPI(title='PolyQuant Intelligence',version='6.0.0')
+settings=get_settings();service=QuantService(settings);backtester=Backtester();cross_market=CrossMarketAnalyzer();experiments=ExperimentRegistry(service.storage,backtester);validator=StrategyValidator();auto_trader=AutoTrader(service,settings.auto_interval_seconds,settings.auto_order_notional,settings.auto_max_trades_per_cycle,settings.auto_allow_pyramiding);maintenance=MaintenanceLoop(service,settings.maintenance_interval_seconds,settings.maintenance_resolution_sync,settings.maintenance_resolution_limit);realtime=RealtimeEngine(service,settings.realtime_enabled,settings.realtime_prefer_sdk,settings.realtime_poll_seconds,settings.realtime_stale_seconds,settings.realtime_market_limit)
+app=FastAPI(title='PolyQuant Intelligence',version='7.0.0')
 @app.get('/api/health')
-async def health():return {'ok':True,'mode':settings.mode,'data_source':service.last_source,'live_execution':settings.live_execution_enabled,'version':'6.0.0'}
+async def health():return {'ok':True,'mode':settings.mode,'data_source':service.last_source,'live_execution':settings.live_execution_enabled,'realtime':realtime.status(),'version':'7.0.0'}
 @app.get('/api/system/status')
-async def system_status():return {**service.system_status(),'maintenance':maintenance.status()}
+async def system_status():return {**service.system_status(),'version':'7.0.0','maintenance':maintenance.status(),'realtime':realtime.status()}
+@app.get('/api/realtime/status')
+async def realtime_status():return realtime.status()
+@app.get('/api/realtime/snapshot')
+async def realtime_snapshot():return {**realtime.status(),'quotes':realtime.cache.snapshot()['quotes']}
+@app.websocket('/ws/markets')
+async def market_socket(ws:WebSocket):
+    await ws.accept();q=realtime.subscribe()
+    try:
+        await ws.send_json({'type':'snapshot','data':{'status':realtime.status(),'quotes':realtime.cache.snapshot()['quotes']}})
+        while True:
+            try:message=await asyncio.wait_for(q.get(),timeout=15)
+            except asyncio.TimeoutError:message={'type':'heartbeat','data':realtime.status()}
+            await ws.send_json(message)
+    except WebSocketDisconnect:pass
+    finally:realtime.unsubscribe(q)
 @app.get('/api/markets')
 async def markets():return await service.markets()
 @app.get('/api/opportunities')
@@ -117,10 +133,11 @@ async def auto_start():return await auto_trader.start()
 async def auto_stop():return await auto_trader.stop()
 @app.on_event('startup')
 async def startup_tasks():
+    if settings.realtime_enabled:await realtime.start()
     if settings.auto_trade_enabled:await auto_trader.start()
     if settings.maintenance_enabled:await maintenance.start()
 @app.on_event('shutdown')
-async def shutdown_tasks():await auto_trader.stop();await maintenance.stop()
+async def shutdown_tasks():await realtime.stop();await auto_trader.stop();await maintenance.stop()
 @app.get('/api/paper/account')
 async def paper_account():return service.broker.account()
 @app.post('/api/paper/orders')
