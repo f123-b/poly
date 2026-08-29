@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 class BookLevel(BaseModel):
@@ -17,6 +17,7 @@ class Market(BaseModel):
     id: str
     question: str
     slug: str = ""
+    condition_id: str | None = None
     category: str = "General"
     end_date: datetime | None = None
     active: bool = True
@@ -53,7 +54,8 @@ class Prediction(BaseModel):
     confidence: float
     edge: float
     direction: Literal["YES", "NO", "PASS"]
-    model_version: str = "quant-ensemble-v1"
+    model_version: str = "quant-ensemble-v3"
+    components: dict[str, float] = Field(default_factory=dict)
     rationale: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -113,6 +115,13 @@ class LiveOrderRequest(BaseModel):
 class ResolveMarketRequest(BaseModel):
     market_id: str
     outcome: Literal["YES", "NO"]
+
+class ExperimentRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    strategy: str = "probability_edge"
+    config: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, float | int | None] = Field(default_factory=dict)
+    notes: str = Field(default="", max_length=2000)
 
 class BacktestPoint(BaseModel):
     price: float
