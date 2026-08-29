@@ -9,80 +9,87 @@ from .calibration import calibration_metrics
 from .smart_money import SmartMoneyClient
 from .strategies import CrossMarketAnalyzer
 from .config import get_settings
-from .models import BacktestRequest, PaperOrderRequest, LiveOrderRequest, ResolveMarketRequest
+from .models import BacktestRequest, PaperOrderRequest, LiveOrderRequest, ResolveMarketRequest, ExperimentRequest
 from .service import QuantService
-
 ROOT=Path(__file__).resolve().parent.parent
 settings=get_settings(); service=QuantService(settings); backtester=Backtester(); cross_market=CrossMarketAnalyzer(); smart_money=SmartMoneyClient(); auto_trader=AutoTrader(service,settings.auto_interval_seconds,settings.auto_order_notional,settings.auto_max_trades_per_cycle)
-app=FastAPI(title="PolyQuant Intelligence",version="2.0.0")
-
-@app.get("/api/health")
-async def health(): return {"ok":True,"mode":settings.mode,"data_source":service.last_source,"live_execution":settings.live_execution_enabled,"event_feed":"external" if settings.event_feed_url else "demo","version":"2.0.0"}
-@app.get("/api/markets")
+app=FastAPI(title='PolyQuant Intelligence',version='3.0.0')
+@app.get('/api/health')
+async def health(): return {'ok':True,**service.system_status()}
+@app.get('/api/system/status')
+async def system_status(): return service.system_status()
+@app.get('/api/markets')
 async def markets(): return await service.markets()
-@app.get("/api/opportunities")
+@app.get('/api/opportunities')
 async def opportunities(limit:int=12): return await service.opportunities(min(max(limit,1),30))
-@app.get("/api/markets/{market_id}")
+@app.get('/api/markets/{market_id}')
 async def market_detail(market_id:str):
     try: return await service.get_market(market_id)
-    except KeyError: raise HTTPException(404,"market not found")
-@app.get("/api/markets/{market_id}/evidence")
+    except KeyError: raise HTTPException(404,'market not found')
+@app.get('/api/markets/{market_id}/evidence')
 async def market_evidence(market_id:str):
     try: return await service.market_evidence(market_id)
-    except KeyError: raise HTTPException(404,"market not found")
-@app.get("/api/events")
+    except KeyError: raise HTTPException(404,'market not found')
+@app.get('/api/events')
 async def events():
     try: return await service.event_feed()
-    except Exception as exc: raise HTTPException(502,f"event feed unavailable: {exc}")
-@app.get("/api/cross-market/anomalies")
+    except Exception as exc: raise HTTPException(502,f'event feed unavailable: {exc}')
+@app.get('/api/research/history')
+async def research_history(market_id:str|None=None,limit:int=100): return service.research_history(market_id,limit)
+@app.get('/api/cross-market/anomalies')
 async def cross_market_anomalies(): return cross_market.find(await service.markets())
-@app.get("/api/cross-market/graph-anomalies")
+@app.get('/api/cross-market/graph-anomalies')
 async def graph_anomalies(): return await service.graph_anomalies()
-@app.get("/api/smart-money/leaderboard")
-async def smart_money_leaderboard(category:str="OVERALL",time_period:str="MONTH",limit:int=10):
-    try: return await smart_money.leaderboard(category,time_period,limit)
-    except Exception as exc: raise HTTPException(502,f"smart-money data unavailable: {exc}")
-@app.get("/api/calibration/demo")
+@app.get('/api/smart-money/leaderboard')
+async def smart_money_leaderboard(category:str='OVERALL',time_period:str='MONTH',limit:int=10): return await smart_money.leaderboard(category,time_period,limit)
+@app.get('/api/smart-money/profiles')
+async def smart_money_profiles(category:str='OVERALL',time_period:str='MONTH',limit:int=20):
+    data=await smart_money.profiles(category,time_period,limit)
+    for row in data['profiles']: service.storage.save_trader_profile(row['wallet'],row)
+    return data
+@app.get('/api/calibration/demo')
 async def calibration_demo(): return calibration_metrics([.18,.28,.36,.48,.57,.64,.72,.81],[0,0,1,0,1,1,1,1],bins=5)
-@app.get("/api/calibration/history")
+@app.get('/api/calibration/history')
 async def calibration_history(): return service.historical_calibration()
-@app.post("/api/calibration/resolve")
+@app.post('/api/calibration/resolve')
 async def calibration_resolve(req:ResolveMarketRequest): return service.resolve(req.market_id,req.outcome)
-@app.get("/api/live/preflight")
+@app.get('/api/experiments')
+async def experiments(limit:int=50): return service.experiments(limit)
+@app.post('/api/experiments')
+async def create_experiment(req:ExperimentRequest): return service.create_experiment(req)
+@app.get('/api/live/preflight')
 async def live_preflight(): return await service.live.preflight()
-@app.post("/api/live/orders")
+@app.post('/api/live/orders')
 async def live_order(req:LiveOrderRequest):
     decision,result=await service.live_order(req)
     if not decision.approved: raise HTTPException(422,detail=decision.model_dump())
-    return {"risk":decision,"order":result}
-@app.get("/api/auto/status")
+    return {'risk':decision,'order':result}
+@app.get('/api/auto/status')
 async def auto_status(): return auto_trader.status()
-@app.post("/api/auto/run-once")
+@app.post('/api/auto/run-once')
 async def auto_run_once(): return await auto_trader.run_once()
-@app.post("/api/auto/start")
+@app.post('/api/auto/start')
 async def auto_start(): return await auto_trader.start()
-@app.post("/api/auto/stop")
+@app.post('/api/auto/stop')
 async def auto_stop(): return await auto_trader.stop()
-@app.on_event("startup")
+@app.on_event('startup')
 async def startup_auto():
     if settings.auto_trade_enabled: await auto_trader.start()
-@app.on_event("shutdown")
+@app.on_event('shutdown')
 async def shutdown_auto(): await auto_trader.stop()
-@app.get("/api/paper/account")
+@app.get('/api/paper/account')
 async def paper_account(): return service.broker.account()
-@app.post("/api/paper/orders")
+@app.post('/api/paper/orders')
 async def paper_order(req:PaperOrderRequest):
     decision,trade=await service.paper_order(req)
     if not decision.approved: raise HTTPException(422,detail=decision.model_dump())
-    return {"risk":decision,"trade":trade,"account":service.broker.account()}
-@app.post("/api/backtest")
+    return {'risk':decision,'trade':trade,'account':service.broker.account()}
+@app.post('/api/backtest')
 async def backtest(req:BacktestRequest): return backtester.run(req)
-@app.post("/api/backtest/demo")
-async def demo_backtest():
-    req=BacktestRequest(points=[{"price":.40,"model_probability":.49},{"price":.42,"model_probability":.52},{"price":.46,"model_probability":.54},{"price":.51,"model_probability":.55},{"price":.56,"model_probability":.56},{"price":.59,"model_probability":.56},{"price":.57,"model_probability":.54}],position_pct=.12,min_edge=.05)
-    return backtester.run(req)
-web=ROOT/"web"
+@app.post('/api/backtest/demo')
+async def demo_backtest(): return backtester.run(BacktestRequest(points=[{'price':.40,'model_probability':.49},{'price':.42,'model_probability':.52},{'price':.46,'model_probability':.54},{'price':.51,'model_probability':.55},{'price':.56,'model_probability':.56},{'price':.59,'model_probability':.56},{'price':.57,'model_probability':.54}],position_pct=.12,min_edge=.05))
+web=ROOT/'web'
 if web.exists():
-    app.mount("/assets",StaticFiles(directory=web),name="assets")
-    @app.get("/")
-    async def root(): return FileResponse(web/"index.html")
+    app.mount('/assets',StaticFiles(directory=web),name='assets')
+    @app.get('/')
+    async def root(): return FileResponse(web/'index.html')
