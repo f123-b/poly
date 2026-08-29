@@ -1,39 +1,31 @@
-# PolyQuant Intelligence V4
+# PolyQuant Intelligence V5
 
-A runnable Polymarket / prediction-market quantitative research, forecasting, validation, backtesting and paper-trading terminal.
+A runnable prediction-market quantitative research, forecasting, validation, backtesting and **persistent Paper trading** terminal for Polymarket-style markets.
 
 Core loop:
 
-`Market → Feature → Evidence → Probability → Edge → Hard Risk → Paper → Resolution → Calibration → Experiment → Validation Gate`
+`Market → Feature → Evidence → Probability → Edge → Hard Risk → Persistent Paper → Resolution → Calibration → Scorecard → Experiment → Validation Gate`
 
-## What V4 adds
+## V5 production-readiness improvements
 
-V4 builds on the V3 research warehouse and adds the controls needed for long-running strategy validation:
+- **Persistent Paper account**: cash, positions and realized PnL are reconstructed from the SQLite trade ledger after every restart.
+- **No accidental pyramiding by default**: automatic Paper skips markets that already have exposure unless `POLYQUANT_AUTO_ALLOW_PYRAMIDING=true` is explicitly set.
+- **Model/category scorecards**: resolved predictions are evaluated by model version and market category using Brier, Log Loss, ECE, direction accuracy, average edge and confidence.
+- **Dataset export**: prediction history can be returned as JSON or downloaded as CSV for analysis/model training.
+- **Maintenance loop**: low-frequency research retention and conservative public resolution sync run independently from the trading loop.
+- **Automatic validation snapshot**: `/api/validation/auto` combines actual calibration, Paper trade count and the best stored backtest experiment. It can recommend research/paper/shadow-live but never unlocks live funds.
 
-- conservative backtest execution with liquidity participation limits
-- explicit latency + slippage + fee accounting
-- partial-fill simulation and turnover/cost metrics
-- public resolved-market sync for calibration labels (non-Demo mode)
-- strategy validation gate using resolved samples, Paper trades, Brier score, ROI, drawdown and Sharpe
-- research-snapshot retention to prevent unbounded SQLite growth
-- V4 dashboard controls for Resolution sync and Validation Gate
+## Existing capabilities
 
-The validation gate can recommend `research`, `paper`, or `shadow-live`, but **never unlocks real-money execution automatically**.
-
-## Existing platform capabilities
-
-- Polymarket public market discovery, order books and price history with Demo fallback
-- persistent market / feature / prediction / evidence research warehouse
-- bounded evidence-aware probability components
-- optional capped OpenAI-compatible research model
+- Public market discovery, order books and price history with deterministic Demo fallback
+- persistent market / feature / prediction / evidence warehouse
+- bounded evidence-aware probability components and optional capped LLM research input
 - cross-market relation/anomaly analysis
-- Smart Money leaderboard, trader profiles and market-flow scoring
-- experiment registry and demo parameter grid
-- resolved-market Brier / Log Loss / ECE calibration
-- Fractional Kelly, portfolio exposure rules and hard RiskEngine
-- Paper Broker + automatic Paper trading loop
-- optional fail-closed live executor with geoblock preflight and explicit per-order confirmation
-- Chinese browser dashboard, Docker, CI and offline smoke validation
+- Smart Money leaderboard, profiles and market-flow scoring
+- conservative backtest with liquidity participation, latency, slippage, fees and partial fills
+- experiment registry, resolved-market calibration, Fractional Kelly and hard portfolio risk rules
+- automatic Paper loop and optional fail-closed live adapter with geoblock preflight + explicit confirmation
+- Chinese dashboard, Docker, CI and fully offline smoke validation
 
 ## Quick start
 
@@ -46,7 +38,7 @@ docker compose up --build
 
 Open `http://localhost:8000`.
 
-Fully offline:
+Offline mode:
 
 ```bash
 python -m venv .venv
@@ -56,59 +48,48 @@ pip install -e '.[dev]'
 POLYQUANT_MODE=demo python -m polyquant
 ```
 
-## V4 APIs
+## V5 APIs
 
-Research/data:
-- `GET /api/markets`
+Research/analytics:
 - `GET /api/opportunities`
-- `GET /api/markets/{id}/history`
 - `GET /api/markets/{id}/research-history`
-- `GET /api/markets/{id}/evidence`
-- `GET /api/markets/{id}/smart-money`
-- `GET /api/system/status`
+- `GET /api/analytics/scorecards`
+- `GET /api/datasets/predictions`
+- `GET /api/datasets/predictions.csv`
 
-Calibration/validation:
+Calibration/validation/maintenance:
 - `GET /api/calibration/history`
-- `POST /api/calibration/resolve`
 - `POST /api/calibration/sync`
 - `POST /api/validation/gate`
+- `GET /api/validation/auto`
+- `GET /api/maintenance/status`
+- `POST /api/maintenance/run-once`
 
-Research experiments/backtest:
-- `GET/POST /api/experiments`
-- `POST /api/experiments/demo-grid`
-- `POST /api/backtest`
-- `POST /api/backtest/demo`
-
-Paper/live:
+Paper/backtest:
 - `GET /api/paper/account`
 - `POST /api/paper/orders`
 - `GET|POST /api/auto/*`
+- `POST /api/backtest`
+- `GET|POST /api/experiments`
+
+Live remains opt-in and fail-closed:
 - `GET /api/live/preflight`
 - `POST /api/live/orders`
 
-## Conservative backtest input
+## Persistence semantics
 
-Each point may include available liquidity:
-
-```json
-{"price":0.42,"model_probability":0.55,"available_liquidity":1000}
-```
-
-`execution_mode=conservative` caps each fill to `available_liquidity * max_participation`, applies `slippage_bps + latency_bps`, tracks fees, slippage cost, turnover and partial fills. Historical order-book depth is not always available, so this is deliberately a conservative approximation rather than a claim of exact replay.
-
-## Resolution sync
-
-`POST /api/calibration/sync` reads recently closed public markets and only labels a market when YES/NO prices are effectively settled (>= 0.995 vs <= 0.005). Ambiguous closed markets are skipped. Demo mode performs no network resolution sync.
+`paper_trades` is the append-only source of truth for Paper execution. On service startup V5 replays the ledger and applies the latest saved market marks. Deleting the SQLite database intentionally resets Paper/research state; restarting the service does not.
 
 ## Safety invariants
 
 1. AI, evidence and Smart Money cannot call execution directly.
-2. Automatic execution is Paper-only.
-3. RiskEngine remains authoritative over entries.
-4. Validation Gate never enables live trading.
-5. Live trading is disabled by default, geoblock checked, explicitly confirmed, and hard-notional limited.
-6. No proxy/VPN/geographic-restriction bypass logic is included.
-7. Backtest/Paper performance is not a guarantee of future profitability.
+2. Automatic execution remains Paper-only.
+3. Repeated automatic entries are disabled by default.
+4. RiskEngine remains authoritative over entries.
+5. Validation Gate/Scorecards never enable live trading.
+6. Live execution remains disabled by default, geoblock checked, explicitly confirmed and hard-notional limited.
+7. No geographic-restriction bypass logic is included.
+8. Backtest/Paper results are not a guarantee of future profitability.
 
 ## Validation
 
