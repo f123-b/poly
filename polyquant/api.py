@@ -9,7 +9,7 @@ from .calibration import calibration_metrics
 from .smart_money import SmartMoneyClient
 from .strategies import CrossMarketAnalyzer
 from .config import get_settings
-from .models import BacktestRequest, PaperOrderRequest
+from .models import BacktestRequest, PaperOrderRequest, LiveOrderRequest
 from .service import QuantService
 
 ROOT=Path(__file__).resolve().parent.parent
@@ -17,7 +17,7 @@ settings=get_settings(); service=QuantService(settings); backtester=Backtester()
 app=FastAPI(title="PolyQuant Intelligence",version="1.0.0")
 
 @app.get("/api/health")
-async def health(): return {"ok":True,"mode":settings.mode,"data_source":service.last_source,"live_execution":False,"version":"1.0.0"}
+async def health(): return {"ok":True,"mode":settings.mode,"data_source":service.last_source,"live_execution":settings.live_execution_enabled,"version":"1.0.0"}
 
 @app.get("/api/markets")
 async def markets(): return await service.markets()
@@ -45,6 +45,15 @@ async def smart_money_leaderboard(category:str="OVERALL",time_period:str="MONTH"
 @app.get("/api/calibration/demo")
 async def calibration_demo():
     return calibration_metrics([.18,.28,.36,.48,.57,.64,.72,.81],[0,0,1,0,1,1,1,1],bins=5)
+
+@app.get("/api/live/preflight")
+async def live_preflight(): return await service.live.preflight()
+
+@app.post("/api/live/orders")
+async def live_order(req:LiveOrderRequest):
+    decision,result=await service.live_order(req)
+    if not decision.approved: raise HTTPException(422,detail=decision.model_dump())
+    return {"risk":decision,"order":result}
 
 @app.get("/api/auto/status")
 async def auto_status(): return auto_trader.status()

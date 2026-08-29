@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     auto_interval_seconds: int = 60
     auto_order_notional: float = 100.0
     auto_max_trades_per_cycle: int = 3
+    live_execution_enabled: bool = False
+    live_risk_ack: str = ""
+    live_private_key: str = ""
+    live_deposit_wallet: str = ""
+    live_max_order_notional: float = 10.0
+    live_max_market_notional: float = 20.0
+    live_max_daily_notional: float = 25.0
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None

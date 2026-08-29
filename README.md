@@ -22,6 +22,7 @@ V1 的目标不是“让大模型直接下注”，而是建立完整决策链�
 - 单市场 / 总敞口 / Edge / Confidence / Spread 硬风控
 - Paper Broker：现金、持仓、成交、PnL
 - Auto Paper Trader：自动扫描 → 风控 → 自动模拟成交，可启动/停止/单次运行
+- 可选 Live Executor：官方 Python SDK + geoblock fail-closed + 明确确认短语 + 单笔/单市场/日累计硬上限
 - 回测：滑点、费用、ROI、Max Drawdown、Win Rate、Sharpe
 - SQLite 预测与交易审计记录
 - FastAPI API
@@ -90,6 +91,8 @@ AI 只提供低权重概率研究输入，**不能调用交易执行器**。
 - `GET /api/cross-market/anomalies`
 - `GET /api/calibration/demo`
 - `GET /api/smart-money/leaderboard`
+- `GET /api/live/preflight`
+- `POST /api/live/orders`（默认禁用，需要显式配置）
 - `GET /api/auto/status`
 - `POST /api/auto/run-once`
 - `POST /api/auto/start` / `POST /api/auto/stop`
@@ -136,3 +139,26 @@ poly/
 ## 当前边界与下一版本
 
 V1 已经形成完整、可运行的研究/Paper 闭环，但没有声称已经拥有经过长期样本验证的盈利 Alpha。后续重点应该是：历史盘口数据仓库、Resolved Market Calibration、事件/新闻 Agent、Cross-Market 关系图、Smart Money、PostgreSQL/Timescale、真实安全执行适配器。
+
+## 可选真实执行（实验性，默认关闭）
+
+V1 的自动循环仍固定为 **Paper**。真实资金执行器作为独立适配层提供，避免未经验证的自动实盘。启用前必须确认所在地可交易，并使用独立的小额钱包。
+
+安装官方 SDK 依赖：
+
+```bash
+pip install -e '.[live]'
+```
+
+然后配置：
+
+```env
+POLYQUANT_LIVE_EXECUTION_ENABLED=true
+POLYQUANT_LIVE_RISK_ACK=I_UNDERSTAND_REAL_MONEY_TRADING
+POLYQUANT_LIVE_PRIVATE_KEY=...
+POLYQUANT_LIVE_DEPOSIT_WALLET=...
+```
+
+先调用 `GET /api/live/preflight`，只有 `ready=true` 才允许继续。每个真实订单还要求请求字段 `confirmation` 精确等于 `EXECUTE_LIVE_ORDER`。V1 默认硬限制：单笔 $10、单市场每日 $20、全局每日 $25，可通过环境变量进一步调低。
+
+真实执行层使用 Polymarket 官方 `AsyncSecureClient.place_market_order`。没有真实凭据的 CI/本地测试不会提交订单。
