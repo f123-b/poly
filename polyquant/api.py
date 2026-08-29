@@ -14,12 +14,11 @@ from .maintenance import MaintenanceLoop
 from .validation import StrategyValidator
 from .models import BacktestRequest,ExperimentRequest,LiveOrderRequest,PaperOrderRequest,ResolveMarketRequest,ValidationGateRequest
 from .service import QuantService
-
 ROOT=Path(__file__).resolve().parent.parent
 settings=get_settings();service=QuantService(settings);backtester=Backtester();cross_market=CrossMarketAnalyzer();experiments=ExperimentRegistry(service.storage,backtester);validator=StrategyValidator();auto_trader=AutoTrader(service,settings.auto_interval_seconds,settings.auto_order_notional,settings.auto_max_trades_per_cycle,settings.auto_allow_pyramiding);maintenance=MaintenanceLoop(service,settings.maintenance_interval_seconds,settings.maintenance_resolution_sync,settings.maintenance_resolution_limit)
-app=FastAPI(title='PolyQuant Intelligence',version='5.0.0')
+app=FastAPI(title='PolyQuant Intelligence',version='6.0.0')
 @app.get('/api/health')
-async def health():return {'ok':True,'mode':settings.mode,'data_source':service.last_source,'live_execution':settings.live_execution_enabled,'event_feed':'external' if settings.event_feed_url else 'demo','version':'5.0.0'}
+async def health():return {'ok':True,'mode':settings.mode,'data_source':service.last_source,'live_execution':settings.live_execution_enabled,'version':'6.0.0'}
 @app.get('/api/system/status')
 async def system_status():return {**service.system_status(),'maintenance':maintenance.status()}
 @app.get('/api/markets')
@@ -68,9 +67,14 @@ async def analytics_scorecards():return service.scorecards()
 async def prediction_dataset(limit:int=10000):return {'rows':service.prediction_dataset(min(max(limit,1),100000))}
 @app.get('/api/datasets/predictions.csv')
 async def prediction_dataset_csv(limit:int=10000):
-    rows=service.prediction_dataset(min(max(limit,1),100000));buf=io.StringIO()
-    fields=['created_at','market_id','question','category','model_version','market_probability','raw_probability','model_probability','confidence','edge','direction','outcome'];w=csv.DictWriter(buf,fieldnames=fields);w.writeheader();w.writerows(rows)
-    return Response(buf.getvalue(),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename=polyquant_predictions.csv'})
+    rows=service.prediction_dataset(min(max(limit,1),100000));buf=io.StringIO();fields=['created_at','market_id','question','category','model_version','market_probability','raw_probability','model_probability','confidence','edge','direction','outcome'];w=csv.DictWriter(buf,fieldnames=fields);w.writeheader();w.writerows(rows);return Response(buf.getvalue(),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename=polyquant_predictions.csv'})
+@app.get('/api/audit/decisions')
+async def audit_decisions(limit:int=100):return service.storage.decisions(limit)
+@app.get('/api/audit/trades/{trade_id}')
+async def audit_trade(trade_id:str):
+    r=service.storage.trade_audit(trade_id)
+    if not r:raise HTTPException(404,'trade not found')
+    return r
 @app.get('/api/calibration/demo')
 async def calibration_demo():return calibration_metrics([.18,.28,.36,.48,.57,.64,.72,.81],[0,0,1,0,1,1,1,1],bins=5)
 @app.get('/api/calibration/history')
@@ -91,8 +95,7 @@ async def experiment_demo_grid():return experiments.run_demo_grid()
 async def validation_gate(req:ValidationGateRequest):return validator.evaluate(req)
 @app.get('/api/validation/auto')
 async def validation_auto():
-    cal=service.historical_calibration();exps=experiments.list(50);usable=[x for x in exps if all(k in x.get('metrics',{}) for k in ('roi','max_drawdown','sharpe'))];best=max(usable,key=lambda x:(x['metrics'].get('sharpe') or -999,x['metrics'].get('roi') or -999),default=None);metrics=best['metrics'] if best else {}
-    req=ValidationGateRequest(resolved_samples=cal['samples'],paper_trades=service.storage.stats()['paper_trades'],brier_score=cal['brier_score'],roi=metrics.get('roi'),max_drawdown=metrics.get('max_drawdown'),sharpe=metrics.get('sharpe'));return {'inputs':req.model_dump(),'experiment_id':best['id'] if best else None,**validator.evaluate(req)}
+    cal=service.historical_calibration();exps=experiments.list(50);usable=[x for x in exps if all(k in x.get('metrics',{}) for k in ('roi','max_drawdown','sharpe'))];best=max(usable,key=lambda x:(x['metrics'].get('sharpe') or -999,x['metrics'].get('roi') or -999),default=None);metrics=best['metrics'] if best else {};req=ValidationGateRequest(resolved_samples=cal['samples'],paper_trades=service.storage.stats()['paper_trades'],brier_score=cal['brier_score'],roi=metrics.get('roi'),max_drawdown=metrics.get('max_drawdown'),sharpe=metrics.get('sharpe'));return {'inputs':req.model_dump(),'experiment_id':best['id'] if best else None,**validator.evaluate(req)}
 @app.get('/api/maintenance/status')
 async def maintenance_status():return maintenance.status()
 @app.post('/api/maintenance/run-once')
