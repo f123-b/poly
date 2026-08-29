@@ -21,3 +21,7 @@ testpaths = ["tests"]
 [build-system]
 requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["polyquant*"]
+exclude = ["tests*", "scripts*", "web*"]
